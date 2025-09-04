@@ -21,9 +21,9 @@ export default function Login() {
       localStorage.setItem("user", JSON.stringify(res.data.usuario));
 
       if (res.data.usuario.rol === "duenio") {
-        navigate("/home-duenio");
+        navigate("/Home_Duenio");
       } else {
-        navigate("/home-usuario");
+        navigate("/Home_Usuario");
       }
     } catch (err) {
       setError("Error al iniciar sesión. Verifica tus credenciales.");
