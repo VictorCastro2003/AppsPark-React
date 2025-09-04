@@ -147,17 +147,17 @@ const HomeDuenio = () => {
   };
 
   const detectarEspaciosIndividual = async (estacionamientoId) => {
-    try {
-      const response = await fetch('http://localhost:8000/detect/by-path/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify("C:/Users/victo/Downloads/parking.jpg"),
-      });
+  try {
+    const response = await fetch('http://localhost:8000/detect/estacionamiento/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(estacionamientoId), // Solo envía el ID
+    });
 
-      if (response.ok) {
-        const data = await response.json();
-        return data.available || 0;
-      } else {
+    if (response.ok) {
+      const data = await response.json();
+      return data.available || 0;
+    }else {
         throw new Error(`Error del servidor: ${response.status}`);
       }
     } catch (e) {
@@ -369,8 +369,8 @@ const HomeDuenio = () => {
       }));
       console.log('✨ Espacios reales calculados:', espaciosReales);
       
-      // TODO: Update in database
-      // await actualizarEspaciosEnBD(estacionamientoId, espaciosReales);
+      // Actualizar en base de datos
+      await actualizarEspaciosEnBD(estacionamientoId, espaciosReales);
       
       console.log('✅ Actualización completa finalizada');
       
@@ -381,6 +381,26 @@ const HomeDuenio = () => {
       setIsDetectingSpaces(false);
     }
   };
+  const actualizarEspaciosEnBD = async (estacionamientoId, espaciosDisponibles) => {
+  try {
+    console.log(`💾 Actualizando BD - Estacionamiento ${estacionamientoId}: ${espaciosDisponibles} espacios`);
+    
+    const response = await api.put(`/estacionamientos/${estacionamientoId}/espacios`, {
+      espacios_disponibles: espaciosDisponibles
+    });
+    
+    if (response.status === 200) {
+      console.log('✅ Base de datos actualizada correctamente');
+      return true;
+    } else {
+      console.error('❌ Error actualizando BD:', response.status);
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Error en actualizarEspaciosEnBD:', error);
+    return false;
+  }
+};
 
   // Handle logout
   const handleLogout = () => {

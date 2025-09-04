@@ -479,29 +479,41 @@ async def detect_parking(file: UploadFile = File(...)):
             content={"success": False, "error": str(e)}
         )
 
-@app.post("/detect/by-path/")
-async def detect_by_path(image_path: str = Body(...)):
+@app.post("/detect/estacionamiento/")
+async def detect_estacionamiento(estacionamiento_id: int = Body(...)):
     try:
-        # 1. Verifica que la ruta exista
+        # Buscar la imagen del estacionamiento
+        image_path = f"images/estacionamientos/{estacionamiento_id}.jpg"
+        
+        # Si no existe, usar una imagen por defecto
         if not os.path.exists(image_path):
-            return JSONResponse(status_code=404, content={"error": "Imagen no encontrada en el servidor"})
+            image_path = "images/default_parking.jpg"
+            
+        # Verificar que la ruta exista (incluyendo la imagen por defecto)
+        if not os.path.exists(image_path):
+            return JSONResponse(status_code=404, content={
+                "error": f"No se encontró imagen para estacionamiento {estacionamiento_id} ni imagen por defecto"
+            })
 
-        # 2. Leer la imagen desde disco
+        # Leer la imagen desde disco
         image_cv2 = cv2.imread(image_path)
         if image_cv2 is None:
             return JSONResponse(status_code=400, content={"error": "No se pudo leer la imagen"})
 
-        # 3. Cargar modelo y zonas
+        # Cargar modelo y zonas
         model = YOLO(model_path)
         parking_zones = load_parking_zones()
 
         print(f"\n=== DETECCIÓN DESDE RUTA ===")
+        print(f"Estacionamiento ID: {estacionamiento_id}")
         print(f"Ruta: {image_path}")
         print(f"Dimensiones: {image_cv2.shape}")
         print(f"Zonas a analizar: {len(parking_zones)}")
 
-        # 4. Detección de objetos
+        # === FASE 1: DETECCIÓN DE CUALQUIER OBJETO ===
+        print(f"\n1. Detectando objetos con YOLO...")
         results = model(image_cv2, **DETECTION_CONFIG)
+        
         all_objects = []
         if results[0].boxes is not None:
             for box in results[0].boxes:
@@ -510,12 +522,14 @@ async def detect_by_path(image_path: str = Body(...)):
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                 bbox_area = (x2 - x1) * (y2 - y1)
                 class_name = model.names[class_id]
-
+                
+                # Verificar si es un objeto significativo (sin filtrar por clase)
                 is_significant, reason = is_significant_object(confidence, bbox_area, (x1, y1, x2, y2))
-
+                
                 if is_significant:
                     center_x = (x1 + x2) / 2
                     center_y = (y1 + y2) / 2
+                    
                     all_objects.append({
                         'center': (float(center_x), float(center_y)),
                         'bbox': (float(x1), float(y1), float(x2), float(y2)),
@@ -523,29 +537,49 @@ async def detect_by_path(image_path: str = Body(...)):
                         'confidence': float(confidence),
                         'reason': reason
                     })
+                    print(f"✅ OBJETO DETECTADO: {class_name} (conf: {confidence:.3f}, área: {bbox_area:.0f})")
+                else:
+                    print(f"❌ Objeto rechazado: {class_name} (conf: {confidence:.3f}) - {reason}")
+        
+        print(f"Total objetos válidos: {len(all_objects)}")
 
-        # 5. Análisis por color
+        # === FASE 2: ANÁLISIS COMPLEMENTARIO POR COLOR ===
+        print(f"\n2. Análisis complementario por color...")
         color_detections = detect_by_color_analysis(image_cv2, parking_zones)
+        print(f"Zonas con actividad detectada: {len(color_detections)}")
 
-        # 6. Análisis de zonas
+        # === FASE 3: ANÁLISIS SIMPLIFICADO DE ZONAS ===
+        print(f"\n3. Analizando ocupación de zonas...")
         occupied_zones, zone_details = analyze_parking_zones_simple(all_objects, color_detections, parking_zones)
 
-        # 7. Generar imagen anotada
+        # === FASE 4: GENERAR IMAGEN ANOTADA ===
         annotated_image = draw_simple_annotations(image_cv2, parking_zones, occupied_zones, zone_details, all_objects)
-        _, buffer = cv2.imencode(".jpg", annotated_image)
-        encoded_image = base64.b64encode(buffer).decode("utf-8")
-        data_uri = f"data:image/jpeg;base64,{encoded_image}"
 
-        # 8. Estadísticas
+        # === FASE 5: CALCULAR ESTADÍSTICAS ===
         total_zones = len(parking_zones)
         occupied_count = len(occupied_zones)
         available_count = total_zones - occupied_count
         occupancy_rate = (occupied_count / total_zones) * 100 if total_zones > 0 else 0
 
-        print(f"✔️ Total: {total_zones}, Ocupadas: {occupied_count}, Disponibles: {available_count}")
+        # Codificar imagen resultado
+        _, buffer = cv2.imencode(".jpg", annotated_image)
+        encoded_image = base64.b64encode(buffer).decode("utf-8")
+        data_uri = f"data:image/jpeg;base64,{encoded_image}"
+
+        # === RESUMEN FINAL ===
+        print(f"\n=== RESUMEN FINAL ===")
+        print(f"Estacionamiento ID: {estacionamiento_id}")
+        print(f"Total zonas: {total_zones}")
+        print(f"Zonas ocupadas: {occupied_count}")
+        print(f"Zonas disponibles: {available_count}")
+        print(f"Tasa de ocupación: {occupancy_rate:.1f}%")
+        print(f"Objetos detectados: {len(all_objects)}")
+        print(f"Análisis de color: {len(color_detections)} zonas")
+        print("================================\n")
 
         return {
             "success": True,
+            "estacionamiento_id": int(estacionamiento_id),
             "image_annotated": data_uri,
             "total": int(total_zones),
             "occupied": int(occupied_count),
@@ -560,15 +594,20 @@ async def detect_by_path(image_path: str = Body(...)):
             "detection_info": {
                 "objects_detected": int(len(all_objects)),
                 "color_analysis_zones": int(len(color_detections)),
-                "detection_method": "simplified_any_object"
+                "detection_method": "simplified_any_object",
+                "image_source": image_path
             },
             "zones": zone_details
         }
 
     except Exception as e:
-        print(f"❌ Error en /detect/by-path/: {str(e)}")
+        print(f"❌ Error en /detect/estacionamiento/: {str(e)}")
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+        return JSONResponse(status_code=500, content={
+            "success": False, 
+            "error": str(e),
+            "estacionamiento_id": estacionamiento_id
+        })
 
 @app.get("/")
 async def root():
