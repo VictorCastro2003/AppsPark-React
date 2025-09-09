@@ -8,11 +8,14 @@ const Registro = () => {
     email: '',
     password: '',
     confirmPassword: '',
-    rol: 'CLIENTE' // valor por defecto
+    rol: 'usuario' // Cambiado para coincidir con el enum del backend
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // URL base del backend
+  const API_BASE_URL = 'http://localhost:8000';
 
   // Manejar cambios en los inputs
   const handleChange = (e) => {
@@ -65,6 +68,19 @@ const Registro = () => {
     return Object.keys(newErrors).length === 0;
   };
 
+  // Función auxiliar para parsear respuesta JSON de forma segura
+  const safeJsonParse = async (response) => {
+    const text = await response.text();
+    if (!text) {
+      throw new Error(`Error ${response.status}: Respuesta vacía del servidor`);
+    }
+    try {
+      return JSON.parse(text);
+    } catch (parseError) {
+      throw new Error(`Error ${response.status}: Respuesta inválida del servidor`);
+    }
+  };
+
   // Enviar formulario
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -77,8 +93,14 @@ const Registro = () => {
     setErrors({});
 
     try {
-      // Registro del usuario
-      const registerResponse = await fetch('/api/usuarios/', {
+      console.log('Enviando datos de registro:', {
+        nombre: formData.nombre,
+        email: formData.email,
+        rol: formData.rol
+      });
+
+      // Registro del usuario - URL corregida (sin /api/)
+      const registerResponse = await fetch(`${API_BASE_URL}/usuarios/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -91,13 +113,27 @@ const Registro = () => {
         }),
       });
 
+      console.log('Respuesta de registro status:', registerResponse.status);
+
       if (!registerResponse.ok) {
-        const errorData = await registerResponse.json();
-        throw new Error(errorData.detail || 'Error en el registro');
+        let errorMessage = `Error ${registerResponse.status}`;
+        try {
+          const errorData = await safeJsonParse(registerResponse);
+          errorMessage = errorData.detail || errorMessage;
+        } catch (parseError) {
+          console.error('Error al parsear respuesta de error:', parseError);
+          errorMessage = `Error ${registerResponse.status}: ${registerResponse.statusText}`;
+        }
+        throw new Error(errorMessage);
       }
 
+      // Parsear respuesta de registro
+      const registerData = await safeJsonParse(registerResponse);
+      console.log('Registro exitoso:', registerData);
+
       // Si el registro es exitoso, hacer login automáticamente
-      const loginResponse = await fetch('/api/auth/login', {
+      console.log('Intentando login automático...');
+      const loginResponse = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -108,12 +144,28 @@ const Registro = () => {
         }),
       });
 
+      console.log('Respuesta de login status:', loginResponse.status);
+
       if (!loginResponse.ok) {
-        throw new Error('Error en el login automático');
+        let errorMessage = `Error en login: ${loginResponse.status}`;
+        try {
+          const errorData = await safeJsonParse(loginResponse);
+          errorMessage = errorData.detail || errorMessage;
+        } catch (parseError) {
+          console.error('Error al parsear respuesta de login:', parseError);
+          errorMessage = `Error de login ${loginResponse.status}: ${loginResponse.statusText}`;
+        }
+        throw new Error(errorMessage);
       }
 
-      const loginData = await loginResponse.json();
+      const loginData = await safeJsonParse(loginResponse);
+      console.log('Login exitoso:', loginData);
       
+      // Verificar que tengamos los datos necesarios
+      if (!loginData.token || !loginData.usuario) {
+        throw new Error('Respuesta de login incompleta');
+      }
+
       // Usar el contexto de autenticación para hacer login
       login(loginData.usuario, loginData.token);
 
@@ -126,12 +178,12 @@ const Registro = () => {
         email: '',
         password: '',
         confirmPassword: '',
-        rol: 'CLIENTE'
+        rol: 'usuario'
       });
 
     } catch (error) {
-      console.error('Error en el registro:', error);
-      setErrors({ submit: error.message || 'Error en el servidor' });
+      console.error('Error completo en el registro:', error);
+      setErrors({ submit: error.message || 'Error desconocido en el servidor' });
     } finally {
       setLoading(false);
     }
@@ -214,8 +266,9 @@ const Registro = () => {
                     value={formData.rol}
                     onChange={handleChange}
                   >
-                    <option value="CLIENTE">Cliente</option>
-                    <option value="ADMINISTRADOR">Administrador</option>
+                    <option value="usuario">Usuario</option>
+                    <option value="duenio">Dueño de Estacionamiento</option>
+                    <option value="admin">Administrador</option>
                   </select>
                   {errors.rol && (
                     <div className="invalid-feedback">
@@ -245,7 +298,7 @@ const Registro = () => {
                       className="btn btn-outline-secondary"
                       onClick={() => setShowPassword(!showPassword)}
                     >
-                      {showPassword ? '👁️‍🗨️' : '👁️'}
+                      {showPassword ? '🙈' : '👁️'}
                     </button>
                   </div>
                   {errors.password && (
