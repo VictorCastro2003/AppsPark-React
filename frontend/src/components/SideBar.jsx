@@ -34,7 +34,7 @@ export default function Sidebar({ currentPage = "inicio" }) {
         icon: "bi-person-fill", 
         label: "Mi Perfil", 
         key: "perfil", 
-        route: "/perfil" 
+        route: "/profile" 
       },
       { 
         icon: "bi-clock-history", 

@@ -10,6 +10,7 @@ import ReservaDuenio from "./pages/ReservaDuenio";
 import ReservaUsuario from "./pages/ReservaUsuario";
 import MisReservas from "./pages/MisReservas";
 import Register from "./pages/Register"
+import Profile from "./pages/profile"
 
 function App() {
   return (
@@ -31,6 +32,7 @@ function App() {
           <Route path="/reservas_duenio" element={<ReservaDuenio />} />
           <Route path="/reservas_usuario" element={<ReservaUsuario />} />
           <Route path="/mis_reservas" element={<MisReservas />} />
+          <Route path="/profile" element={<Profile />} />
         </Routes>
       </Router>
     </AuthProvider>

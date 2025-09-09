@@ -55,6 +55,25 @@ export const AuthProvider = ({ children }) => {
     // Limpiar localStorage
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+
+    // Opcional: redirigir a login
+    window.location.href = '/login';
+  };
+
+  // Nueva función para actualizar usuario
+  const updateUser = (updatedUserData) => {
+    // Mantener el token actual, solo actualizar datos del usuario
+    const newUserData = {
+      ...user,
+      ...updatedUserData
+    };
+    
+    setUser(newUserData);
+    
+    // Actualizar en localStorage
+    localStorage.setItem('user', JSON.stringify(newUserData));
+    
+    console.log('Usuario actualizado en contexto:', newUserData);
   };
 
   // Helper para peticiones autenticadas
@@ -66,14 +85,61 @@ export const AuthProvider = ({ children }) => {
     };
   };
 
+  // Helper para hacer peticiones autenticadas
+  const authenticatedFetch = async (url, options = {}) => {
+    const headers = getAuthHeaders(options.headers || {});
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...headers
+        }
+      });
+
+      // Si el token expiró o es inválido
+      if (response.status === 401) {
+        console.warn('Token expirado o inválido, cerrando sesión');
+        logout();
+        throw new Error('Sesión expirada');
+      }
+
+      return response;
+    } catch (error) {
+      console.error('Error en petición autenticada:', error);
+      throw error;
+    }
+  };
+
+  // Función para refrescar datos del usuario desde el servidor
+  const refreshUserData = async () => {
+    if (!token) return;
+
+    try {
+      const response = await authenticatedFetch('http://localhost:8000/usuarios/me');
+      
+      if (response.ok) {
+        const userData = await response.json();
+        updateUser(userData);
+        return userData;
+      }
+    } catch (error) {
+      console.error('Error al refrescar datos del usuario:', error);
+    }
+  };
+
   const value = {
-    user,               // objeto con info del usuario (incluye user.id)
-    token,              // JWT
-    isAuthenticated,    // booleano
-    loading,            // útil para "splash screen" o loaders globales
-    login,              // función para iniciar sesión
-    logout,             // función para cerrar sesión
-    getAuthHeaders,     // helper para fetch con auth
+    user,                   // objeto con info del usuario (incluye user.id)
+    token,                  // JWT
+    isAuthenticated,        // booleano
+    loading,                // útil para "splash screen" o loaders globales
+    login,                  // función para iniciar sesión
+    logout,                 // función para cerrar sesión
+    updateUser,             // NUEVA: función para actualizar datos del usuario
+    getAuthHeaders,         // helper para fetch con auth
+    authenticatedFetch,     // NUEVA: helper para peticiones con manejo de errores
+    refreshUserData,        // NUEVA: función para refrescar datos desde servidor
   };
 
   return (
