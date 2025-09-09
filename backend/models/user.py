@@ -20,3 +20,4 @@ class Usuario(Base):
 
     estacionamientos = relationship("Estacionamiento", back_populates="duenio")  # si existe
     reservas = relationship("Reserva", back_populates="usuario")
+    

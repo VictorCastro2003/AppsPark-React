@@ -21,11 +21,12 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const savedToken = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
-    
+
     if (savedToken && savedUser) {
       try {
+        const parsedUser = JSON.parse(savedUser);
         setToken(savedToken);
-        setUser(JSON.parse(savedUser));
+        setUser(parsedUser);
         setIsAuthenticated(true);
       } catch (error) {
         console.error('Error al cargar datos del usuario:', error);
@@ -40,7 +41,7 @@ export const AuthProvider = ({ children }) => {
     setUser(userData);
     setToken(authToken);
     setIsAuthenticated(true);
-    
+
     // Guardar en localStorage
     localStorage.setItem('token', authToken);
     localStorage.setItem('user', JSON.stringify(userData));
@@ -50,19 +51,29 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setToken(null);
     setIsAuthenticated(false);
-    
+
     // Limpiar localStorage
     localStorage.removeItem('token');
     localStorage.removeItem('user');
   };
 
+  // Helper para peticiones autenticadas
+  const getAuthHeaders = (extraHeaders = {}) => {
+    if (!token) return extraHeaders;
+    return {
+      ...extraHeaders,
+      Authorization: `Bearer ${token}`,
+    };
+  };
+
   const value = {
-    user,
-    token,
-    isAuthenticated,
-    loading,
-    login,
-    logout
+    user,               // objeto con info del usuario (incluye user.id)
+    token,              // JWT
+    isAuthenticated,    // booleano
+    loading,            // útil para "splash screen" o loaders globales
+    login,              // función para iniciar sesión
+    logout,             // función para cerrar sesión
+    getAuthHeaders,     // helper para fetch con auth
   };
 
   return (

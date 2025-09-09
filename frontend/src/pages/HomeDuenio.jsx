@@ -52,7 +52,7 @@ const HomeDuenio = () => {
     console.log('👤 Username:', user?.username);
     console.log('📧 Email:', user?.email);
     console.log('🏷️ Rol:', user?.rol);
-    console.log('🔐 Autenticado:', isAuthenticated);
+    console.log('🔒 Autenticado:', isAuthenticated);
     console.log('⏳ Cargando auth:', authLoading);
     console.log('==========================================\n');
   };
@@ -194,67 +194,35 @@ const HomeDuenio = () => {
     }
   };
 
-  const obtenerReservasActivasDelEstacionamiento = async (estacionamientoId) => {
-    try {
-      const response = await api.get(`/reservas/activas/${estacionamientoId}`);
-      
-      console.log(`🔍 Consultando reservas activas para estacionamiento ${estacionamientoId}`);
-      console.log('📡 Status Code:', response.status);
-      console.log('📄 Response Data:', response.data);
+ const obtenerReservasActivasDelEstacionamiento = async (estacionamientoId) => {
+  try {
+    const response = await api.get(`/reservas/activas/${estacionamientoId}`);
+    
+    console.log(`🔍 Consultando reservas activas REALES para estacionamiento ${estacionamientoId}`);
+    console.log('📡 Status Code:', response.status);
+    console.log('📄 Response Data:', response.data);
 
-      if (response.status === 200) {
-        const data = response.data;
-        
-        // Show debug info if available
-        if (data.debug_info) {
-          const debugInfo = data.debug_info;
-          console.log('🔍 === INFORMACIÓN DE DEBUG DEL SERVIDOR ===');
-          console.log('📊 Total de reservas en BD:', debugInfo.total_reservas);
-          console.log('📅 Reservas para hoy:', debugInfo.reservas_hoy);
-          console.log('✅ Todas las reservas activas:', debugInfo.todas_activas);
-          console.log('📆 Reservas en rango:', debugInfo.reservas_en_rango);
-          console.log('===============================================');
-        }
-        
-        let reservasActivas = 0;
-        
-        if (data && typeof data === 'object') {
-          // Priorizar el valor principal
-          reservasActivas = data.reservas_activas || 0;
-          
-          // Si el valor principal es 0, intentar usar debug_info
-          if (reservasActivas === 0 && data.debug_info) {
-            const debugInfo = data.debug_info;
-            
-            // Probar diferentes campos del debug_info
-            if (debugInfo.todas_activas && debugInfo.todas_activas > 0) {
-              reservasActivas = debugInfo.todas_activas;
-              console.log('🔧 Usando todas_activas del debug:', reservasActivas);
-            } else if (debugInfo.reservas_en_rango && debugInfo.reservas_en_rango > 0) {
-              reservasActivas = debugInfo.reservas_en_rango;
-              console.log('🔧 Usando reservas_en_rango del debug:', reservasActivas);
-            } else if (debugInfo.total_reservas && debugInfo.total_reservas > 0) {
-              reservasActivas = debugInfo.total_reservas;
-              console.log('🔧 Usando total_reservas del debug:', reservasActivas);
-            }
-          }
-        }
-        
-        console.log('✅ Reservas activas FINALES que se usarán:', reservasActivas);
-        return reservasActivas;
-        
-      } else if (response.status === 404) {
-        console.log('ℹ️ No hay reservas activas para este estacionamiento');
-        return 0;
-      } else {
-        console.log('❌ Error del servidor:', response.status);
-        return 0;
-      }
-    } catch (e) {
-      console.error('❌ Error al obtener reservas activas:', e);
+    if (response.status === 200) {
+      const data = response.data;
+      
+      // Usar directamente reservas_activas (que ahora son las reales)
+      let reservasActivas = data.reservas_activas || 0;
+      
+      console.log('✅ Reservas activas REALES encontradas:', reservasActivas);
+      return reservasActivas;
+      
+    } else if (response.status === 404) {
+      console.log('ℹ️ No hay reservas activas para este estacionamiento');
+      return 0;
+    } else {
+      console.log('❌ Error del servidor:', response.status);
       return 0;
     }
-  };
+  } catch (e) {
+    console.error('❌ Error al obtener reservas activas:', e);
+    return 0;
+  }
+};
 
   const calcularEspaciosReales = () => {
     console.log('\n🧮 === CALCULANDO ESPACIOS REALES ===');
@@ -339,66 +307,107 @@ const HomeDuenio = () => {
   };
 
   const actualizarDeteccionIndividual = async (estacionamientoId) => {
-    try {
-      setIsDetectingSpaces(true);
-      setDetectionError(null);
-      
-      console.log(`\n🔄 === ACTUALIZANDO ESTACIONAMIENTO ${estacionamientoId} ===`);
-      
-      // 1. Update YOLO
-      const espaciosYolo = await detectarEspaciosIndividual(estacionamientoId);
-      setEspaciosDisponiblesPorEstacionamiento(prev => ({
-        ...prev,
-        [estacionamientoId]: espaciosYolo
-      }));
-      console.log('🤖 YOLO detectó:', espaciosYolo, 'espacios');
-      
-      // 2. Update reservations
-      const reservasActivas = await obtenerReservasActivasDelEstacionamiento(estacionamientoId);
-      setReservasActivasPorEstacionamiento(prev => ({
-        ...prev,
-        [estacionamientoId]: reservasActivas
-      }));
-      console.log('📅 Reservas activas:', reservasActivas);
-      
-      // 3. Calculate real spaces
-      const espaciosReales = Math.max(0, Math.min(espaciosYolo - reservasActivas, espaciosYolo));
-      setEspaciosRealesDisponibles(prev => ({
-        ...prev,
-        [estacionamientoId]: espaciosReales
-      }));
-      console.log('✨ Espacios reales calculados:', espaciosReales);
-      
-      // Actualizar en base de datos
-      await actualizarEspaciosEnBD(estacionamientoId, espaciosReales);
-      
-      console.log('✅ Actualización completa finalizada');
-      
-    } catch (error) {
-      setDetectionError(error.toString());
-      console.error('❌ Error en actualización:', error);
-    } finally {
-      setIsDetectingSpaces(false);
+  try {
+    setIsDetectingSpaces(true);
+    setDetectionError(null);
+    
+    console.log(`\n🔄 === ACTUALIZANDO ESTACIONAMIENTO ${estacionamientoId} ===`);
+    
+    // 1. Update YOLO
+    const espaciosYolo = await detectarEspaciosIndividual(estacionamientoId);
+    console.log('🤖 YOLO detectó:', espaciosYolo, 'espacios');
+    
+    // 2. Update reservations
+    const reservasActivas = await obtenerReservasActivasDelEstacionamiento(estacionamientoId);
+    console.log('📅 Reservas activas:', reservasActivas);
+    
+    // 3. Calculate real spaces
+    const espaciosReales = Math.max(0, Math.min(espaciosYolo - reservasActivas, espaciosYolo));
+    console.log('✨ Espacios reales calculados:', espaciosReales);
+    
+    // 4. Actualizar en base de datos PRIMERO
+    const bdActualizada = await actualizarEspaciosEnBD(estacionamientoId, espaciosReales);
+    
+    if (!bdActualizada) {
+      throw new Error('No se pudo actualizar la base de datos');
     }
-  };
-  const actualizarEspaciosEnBD = async (estacionamientoId, espaciosDisponibles) => {
+    
+    // 5. Solo actualizar el estado si la BD se actualizó correctamente
+    setEspaciosDisponiblesPorEstacionamiento(prev => ({
+      ...prev,
+      [estacionamientoId]: espaciosYolo
+    }));
+    
+    setReservasActivasPorEstacionamiento(prev => ({
+      ...prev,
+      [estacionamientoId]: reservasActivas
+    }));
+    
+    setEspaciosRealesDisponibles(prev => ({
+      ...prev,
+      [estacionamientoId]: espaciosReales
+    }));
+    
+    // 6. Actualizar el estacionamiento en el array local
+    setEstacionamientos(prev => prev.map(est => 
+      est.id === parseInt(estacionamientoId) 
+        ? { ...est, espacios_disponibles: espaciosReales }
+        : est
+    ));
+    
+    console.log('✅ Actualización completa finalizada');
+    
+    // Mostrar mensaje de éxito
+    alert(`✅ Estacionamiento actualizado correctamente!\n\nEspacios disponibles: ${espaciosReales}`);
+    
+  } catch (error) {
+    setDetectionError(`Error en actualización: ${error.message}`);
+    console.error('❌ Error en actualización:', error);
+    
+    // Mostrar mensaje de error
+    alert(`❌ Error al actualizar: ${error.message}`);
+  } finally {
+    setIsDetectingSpaces(false);
+  }
+};
+  
+const actualizarEspaciosEnBD = async (estacionamientoId, espaciosDisponibles) => {
   try {
     console.log(`💾 Actualizando BD - Estacionamiento ${estacionamientoId}: ${espaciosDisponibles} espacios`);
     
-    const response = await api.put(`/estacionamientos/${estacionamientoId}/espacios`, {
+    // Asegurar que estacionamientoId sea número
+    const id = parseInt(estacionamientoId);
+    
+    const payload = {
       espacios_disponibles: espaciosDisponibles
-    });
+    };
+    
+    console.log('📤 Enviando payload:', payload);
+    console.log('🎯 URL:', `/estacionamientos/${id}/espacios`);
+    
+    const response = await api.put(`/estacionamientos/${id}/espacios`, payload);
+    
+    console.log('📡 Response status:', response.status);
+    console.log('📄 Response data:', response.data);
     
     if (response.status === 200) {
       console.log('✅ Base de datos actualizada correctamente');
+      console.log('📊 Nuevos datos del estacionamiento:', response.data);
       return true;
     } else {
-      console.error('❌ Error actualizando BD:', response.status);
+      console.error('❌ Error actualizando BD - Status:', response.status);
       return false;
     }
   } catch (error) {
     console.error('❌ Error en actualizarEspaciosEnBD:', error);
-    return false;
+    console.error('📋 Error details:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status
+    });
+    
+    // Lanzar el error para que se capture arriba
+    throw new Error(error.response?.data?.detail || error.message || 'Error desconocido al actualizar BD');
   }
 };
 
@@ -504,7 +513,7 @@ const HomeDuenio = () => {
         ➕ Agregar Estacionamiento
       </button>
       <button
-        onClick={() => navigate('/reservas-duenio')}
+        onClick={() => navigate('/reservas_duenio')}
         className="btn btn-outline-secondary"
       >
         📅 Ver Reservas
@@ -525,6 +534,23 @@ const HomeDuenio = () => {
     
     const hayDeteccionYolo = espaciosYolo > 0;
     const espaciosMostrar = hayDeteccionYolo ? espaciosReales : e.espacios_disponibles;
+
+    // Create complete estacionamiento object similar to Dart version
+    const estacionamientoCompleto = {
+      id: e.id,
+      nombre: e.nombre,
+      direccion: e.direccion,
+      precio: e.precio,
+      espacios_total: e.espacios_total,
+      espacios_disponibles: espaciosMostrar, // Use calculated value
+      horario: e.horario,
+      duenio_id: e.duenio_id,
+      // Additional calculated data
+      espacios_yolo: espaciosYolo,
+      reservas_activas: reservasActivas,
+      espacios_reales: espaciosReales,
+      hay_deteccion_yolo: hayDeteccionYolo
+    };
 
     return (
       <div key={e.id} className="col">
@@ -588,12 +614,16 @@ const HomeDuenio = () => {
 
             {/* Action Buttons */}
             <div className="d-flex justify-content-between align-items-center">
-              <button
-                onClick={() => navigate(`/estacionamiento-detalle/${e.id}`)}
-                className="btn btn-outline-secondary btn-sm"
-              >
-                👁️ Detalles
-              </button>
+           <button
+          onClick={() => navigate(`/detail_Duenio`, { 
+            state: { 
+              parkingData: estacionamientoCompleto 
+            } 
+          })}
+          className="btn btn-outline-secondary btn-sm"
+        >
+          👁️ Detalles
+        </button>
               <div className="d-flex gap-2">
                 <button
                   className="btn btn-light btn-sm"

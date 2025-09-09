@@ -18,12 +18,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS config
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -313,18 +312,13 @@ def analyze_parking_zones_simple(all_objects, color_detections, parking_zones):
     return occupied_zones, zone_details
 
 def draw_simple_annotations(image, parking_zones, occupied_zones, zone_details, all_objects):
-    """Dibuja anotaciones simplificadas en la imagen"""
+    """Dibuja anotaciones simplificadas en la imagen sin texto"""
     annotated_image = image.copy()
     
-    # 1. Dibujar bounding boxes de objetos detectados
+    # 1. Dibujar bounding boxes de objetos detectados (sin etiquetas)
     for obj in all_objects:
         x1, y1, x2, y2 = obj['bbox']
-        cv2.rectangle(annotated_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 255), 2)  # Amarillo
-        
-        # Etiqueta simple
-        label = f"Objeto {obj['confidence']:.2f}"
-        cv2.putText(annotated_image, label, (int(x1), int(y1-5)), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        cv2.rectangle(annotated_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 255), 2)
     
     # 2. Dibujar zonas de estacionamiento
     for i, zone in enumerate(parking_zones):
@@ -332,36 +326,15 @@ def draw_simple_annotations(image, parking_zones, occupied_zones, zone_details, 
         points = points.reshape((-1, 1, 2))
         
         # Color según estado
-        if i in occupied_zones:
-            color = (0, 0, 255)  # Rojo para ocupado
-            status_text = "OCUPADO"
-        else:
-            color = (0, 255, 0)  # Verde para libre
-            status_text = "LIBRE"
+        color = (0, 0, 255) if i in occupied_zones else (0, 255, 0)
         
-        # Dibujar contorno más grueso
+        # Dibujar contorno
         cv2.polylines(annotated_image, [points], True, color, 4)
         
         # Rellenar con transparencia
         overlay = annotated_image.copy()
         cv2.fillPoly(overlay, [points], color)
         cv2.addWeighted(overlay, 0.3, annotated_image, 0.7, 0, annotated_image)
-        
-        # Texto en el centro de la zona
-        center_x = int(np.mean([p[0] for p in zone['points']]))
-        center_y = int(np.mean([p[1] for p in zone['points']]))
-        
-        # Número de zona grande y visible
-        cv2.putText(annotated_image, f"#{i+1}", (center_x-25, center_y-10), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
-        cv2.putText(annotated_image, f"#{i+1}", (center_x-25, center_y-10), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
-        
-        # Estado
-        cv2.putText(annotated_image, status_text, (center_x-40, center_y+20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(annotated_image, status_text, (center_x-40, center_y+20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
     
     return annotated_image
 

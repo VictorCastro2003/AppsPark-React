@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.reserva import Reserva
 from models.estacionamiento import Estacionamiento
-from models.cajon import Cajon  # Importar el modelo Cajon
 from schemas.reserva_schema import ReservaCreate, ReservaOut
 from datetime import datetime, date, time, timedelta
 from pydantic import BaseModel
@@ -12,21 +11,20 @@ from typing import Optional
 
 router = APIRouter(prefix="/reservas", tags=["reservas"])
 
-# Schema para crear reservas
+# Schema para crear reservas - SIN CAJON_ID
 class ReservaCreateRequest(BaseModel):
     estacionamiento_id: int
     usuario_id: int
-    cajon_id: Optional[int] = None  # Hacer opcional
     fecha_reserva: str  # formato YYYY-MM-DD
     hora_inicio: str    # formato HH:MM
     hora_fin: str       # formato HH:MM
     placa_vehiculo: str
 
-# ENDPOINT PRINCIPAL PARA CREAR RESERVAS
+# ENDPOINT PRINCIPAL PARA CREAR RESERVAS - SIMPLIFICADO SIN CAJONES
 @router.post("/", response_model=dict)
 def crear_reserva(reserva_data: ReservaCreateRequest, db: Session = Depends(get_db)):
     """
-    Crear una nueva reserva - Este es el endpoint que tu Flutter está llamando
+    Crear una nueva reserva - Simplificado sin manejo de cajones
     """
     # Verificar que el estacionamiento existe
     estacionamiento = db.query(Estacionamiento).filter(
@@ -36,52 +34,11 @@ def crear_reserva(reserva_data: ReservaCreateRequest, db: Session = Depends(get_
     if not estacionamiento:
         raise HTTPException(status_code=404, detail="Estacionamiento no encontrado")
     
-    # SOLUCIÓN 1: Validar que el cajón existe si se proporciona
-    cajon_id_final = None
-    if reserva_data.cajon_id:
-        cajon = db.query(Cajon).filter(
-            Cajon.id == reserva_data.cajon_id,
-            Cajon.estacionamiento_id == reserva_data.estacionamiento_id
-        ).first()
-        
-        if not cajon:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Cajón con ID {reserva_data.cajon_id} no encontrado en este estacionamiento"
-            )
-        
-        # Verificar que el cajón esté disponible
-        if not cajon.disponible:
-            raise HTTPException(
-                status_code=400,
-                detail=f"El cajón {reserva_data.cajon_id} no está disponible"
-            )
-        
-        cajon_id_final = reserva_data.cajon_id
-    else:
-        # SOLUCIÓN 2: Auto-asignar un cajón disponible
-        cajon_disponible = db.query(Cajon).filter(
-            Cajon.estacionamiento_id == reserva_data.estacionamiento_id,
-            Cajon.disponible == True
-        ).first()
-        
-        if cajon_disponible:
-            cajon_id_final = cajon_disponible.id
-        # Si no hay cajones disponibles, dejar cajon_id como None
-    
-    # Verificar espacios disponibles para la fecha
-    reservas_aceptadas = db.query(Reserva).filter(
-        Reserva.estacionamiento_id == reserva_data.estacionamiento_id,
-        Reserva.fecha_reserva == reserva_data.fecha_reserva,
-        Reserva.estado == "aceptada"
-    ).count()
-    
-    espacios_disponibles = estacionamiento.espacios_total - reservas_aceptadas
-    
-    if espacios_disponibles <= 0:
+    # Verificar que hay espacios disponibles
+    if estacionamiento.espacios_disponibles <= 0:
         raise HTTPException(
             status_code=400,
-            detail=f"No hay espacios disponibles para la fecha {reserva_data.fecha_reserva}"
+            detail="No hay espacios disponibles en este estacionamiento"
         )
     
     # Validar que la hora de fin sea posterior a la de inicio
@@ -109,11 +66,11 @@ def crear_reserva(reserva_data: ReservaCreateRequest, db: Session = Depends(get_
             detail="Formato de fecha inválido. Use YYYY-MM-DD"
         )
     
-    # Crear la reserva
+    # Crear la reserva SIN CAJON_ID
     nueva_reserva = Reserva(
         estacionamiento_id=reserva_data.estacionamiento_id,
         usuario_id=reserva_data.usuario_id,
-        cajon_id=cajon_id_final,  # Puede ser None si no hay cajones disponibles
+        cajon_id=None,  # Sin asignación de cajón
         fecha_reserva=fecha_reserva,
         hora_inicio=hora_inicio,
         hora_fin=hora_fin,
@@ -126,19 +83,11 @@ def crear_reserva(reserva_data: ReservaCreateRequest, db: Session = Depends(get_
         db.commit()
         db.refresh(nueva_reserva)
         
-        # Si se asignó un cajón, marcarlo como ocupado temporalmente
-        if cajon_id_final:
-            cajon = db.query(Cajon).filter(Cajon.id == cajon_id_final).first()
-            if cajon:
-                cajon.disponible = False
-                db.commit()
-        
         return {
             "message": "Reserva creada exitosamente",
             "reserva_id": nueva_reserva.id,
             "estado": "pendiente",
-            "cajon_asignado": cajon_id_final,
-            "espacios_restantes": espacios_disponibles - 1
+            "espacios_restantes": estacionamiento.espacios_disponibles - 1
         }
         
     except Exception as e:
@@ -147,29 +96,6 @@ def crear_reserva(reserva_data: ReservaCreateRequest, db: Session = Depends(get_
             status_code=500,
             detail=f"Error al crear la reserva: {str(e)}"
         )
-
-# ENDPOINT PARA OBTENER CAJONES DISPONIBLES
-@router.get("/cajones-disponibles/{estacionamiento_id}")
-def obtener_cajones_disponibles(estacionamiento_id: int, db: Session = Depends(get_db)):
-    """
-    Obtener cajones disponibles para un estacionamiento
-    """
-    cajones = db.query(Cajon).filter(
-        Cajon.estacionamiento_id == estacionamiento_id,
-        Cajon.disponible == True
-    ).all()
-    
-    return {
-        "estacionamiento_id": estacionamiento_id,
-        "cajones_disponibles": [
-            {
-                "id": cajon.id,
-                "numero": cajon.numero,
-                "tipo": cajon.tipo if hasattr(cajon, 'tipo') else "regular"
-            }
-            for cajon in cajones
-        ]
-    }
 
 # ENDPOINT PARA OBTENER RESERVAS DEL USUARIO
 @router.get("/usuario/{usuario_id}", response_model=list[ReservaOut])
@@ -209,7 +135,7 @@ def obtener_reservas_pendientes(duenio_id: int, db: Session = Depends(get_db)):
 @router.put("/{reserva_id}/aceptar")
 def aceptar_reserva(reserva_id: int, db: Session = Depends(get_db)):
     """
-    Aceptar una reserva pendiente
+    Aceptar una reserva pendiente - SIN MANEJO DE CAJONES
     """
     reserva = db.query(Reserva).filter(Reserva.id == reserva_id).first()
     if not reserva:
@@ -233,44 +159,16 @@ def aceptar_reserva(reserva_id: int, db: Session = Depends(get_db)):
             detail="No hay espacios disponibles en este estacionamiento"
         )
 
-    # Verificar si ya hay reservas aceptadas para la misma fecha
-    reservas_aceptadas_fecha = db.query(Reserva).filter(
-        Reserva.estacionamiento_id == reserva.estacionamiento_id,
-        Reserva.fecha_reserva == reserva.fecha_reserva,
-        Reserva.estado == "aceptada"
-    ).count()
-
-    # Calcular espacios realmente disponibles para esa fecha
-    espacios_disponibles_fecha = estacionamiento.espacios_total - reservas_aceptadas_fecha
-
-    if espacios_disponibles_fecha <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail=f"No hay espacios disponibles para la fecha {reserva.fecha_reserva}"
-        )
-
-    # Si no tiene cajón asignado, asignar uno disponible
-    if not reserva.cajon_id:
-        cajon_disponible = db.query(Cajon).filter(
-            Cajon.estacionamiento_id == reserva.estacionamiento_id,
-            Cajon.disponible == True
-        ).first()
-        
-        if cajon_disponible:
-            reserva.cajon_id = cajon_disponible.id
-            cajon_disponible.disponible = False
-
-    # Si todo está bien, aceptar la reserva
+    # Aceptar la reserva
     reserva.estado = "aceptada"
     
-    # Actualizar espacios disponibles generales
+    # Reducir espacios disponibles
     estacionamiento.espacios_disponibles -= 1
 
     db.commit()
     return {
         "message": "Reserva aceptada exitosamente",
-        "cajon_asignado": reserva.cajon_id,
-        "espacios_restantes": espacios_disponibles_fecha - 1
+        "espacios_restantes": estacionamiento.espacios_disponibles
     }
 
 @router.put("/{reserva_id}/rechazar")
@@ -284,12 +182,6 @@ def rechazar_reserva(reserva_id: int, db: Session = Depends(get_db)):
 
     if reserva.estado != "pendiente":
         raise HTTPException(status_code=400, detail="La reserva ya fue procesada")
-
-    # Si tenía un cajón asignado, liberarlo
-    if reserva.cajon_id:
-        cajon = db.query(Cajon).filter(Cajon.id == reserva.cajon_id).first()
-        if cajon:
-            cajon.disponible = True
 
     reserva.estado = "rechazada"
     db.commit()
@@ -319,142 +211,18 @@ def cancelar_reserva(reserva_id: int, usuario_id: int, db: Session = Depends(get
         ).first()
         if estacionamiento:
             estacionamiento.espacios_disponibles += 1
-        
-        # Liberar el cajón si estaba asignado
-        if reserva.cajon_id:
-            cajon = db.query(Cajon).filter(Cajon.id == reserva.cajon_id).first()
-            if cajon:
-                cajon.disponible = True
     
     reserva.estado = "cancelada"
     
     db.commit()
     return {"message": "Reserva cancelada exitosamente"}
 
-# Endpoint para consultar espacios disponibles por fecha
-@router.get("/espacios-disponibles/{estacionamiento_id}")
-def consultar_espacios_disponibles(
-    estacionamiento_id: int, 
-    fecha: str,  # formato: YYYY-MM-DD
-    db: Session = Depends(get_db)
-):
-    """
-    Consultar espacios disponibles para una fecha específica
-    """
-    estacionamiento = db.query(Estacionamiento).filter(
-        Estacionamiento.id == estacionamiento_id
-    ).first()
-    
-    if not estacionamiento:
-        raise HTTPException(status_code=404, detail="Estacionamiento no encontrado")
-    
-    # Contar reservas aceptadas para esa fecha
-    reservas_aceptadas = db.query(Reserva).filter(
-        Reserva.estacionamiento_id == estacionamiento_id,
-        Reserva.fecha_reserva == fecha,
-        Reserva.estado == "aceptada"
-    ).count()
-    
-    espacios_disponibles = estacionamiento.espacios_total - reservas_aceptadas
-    
-    return {
-        "estacionamiento_id": estacionamiento_id,
-        "fecha": fecha,
-        "espacios_totales": estacionamiento.espacios_total,
-        "reservas_aceptadas": reservas_aceptadas,
-        "espacios_disponibles": max(0, espacios_disponibles)
-    }
-
-@router.get("/espacios-disponibles-con-reservas/{estacionamiento_id}")
-def obtener_espacios_disponibles_con_reservas(
-    estacionamiento_id: int,
-    fecha: str = None,  
-    db: Session = Depends(get_db)
-):
-    """
-    Obtiene los espacios disponibles considerando las reservas aceptadas
-    """
-    # Obtener el estacionamiento
-    estacionamiento = db.query(Estacionamiento).filter(
-        Estacionamiento.id == estacionamiento_id
-    ).first()
-    
-    if not estacionamiento:
-        raise HTTPException(status_code=404, detail="Estacionamiento no encontrado")
-    
-    # Si no se proporciona fecha, usar la fecha actual
-    if not fecha:
-        fecha = datetime.now().date().isoformat()
-    
-    # Contar reservas aceptadas para esa fecha
-    reservas_aceptadas = db.query(Reserva).filter(
-        Reserva.estacionamiento_id == estacionamiento_id,
-        Reserva.fecha_reserva == fecha,
-        Reserva.estado == "aceptada"
-    ).count()
-    
-    # Calcular espacios disponibles
-    espacios_disponibles = max(0, estacionamiento.espacios_total - reservas_aceptadas)
-    
-    return {
-        "estacionamiento_id": estacionamiento_id,
-        "fecha": fecha,
-        "espacios_totales": estacionamiento.espacios_total,
-        "reservas_aceptadas": reservas_aceptadas,
-        "espacios_disponibles": espacios_disponibles
-    }
-
-@router.get("/duenio/{duenio_id}/con-espacios-disponibles")
-def obtener_estacionamientos_con_espacios_disponibles(
-    duenio_id: int,
-    fecha: str = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Obtiene todos los estacionamientos de un dueño con sus espacios disponibles
-    """
-    # Si no se proporciona fecha, usar la fecha actual
-    if not fecha:
-        fecha = datetime.now().date().isoformat()
-    
-    # Obtener estacionamientos del dueño
-    estacionamientos = db.query(Estacionamiento).filter(
-        Estacionamiento.duenio_id == duenio_id
-    ).all()
-    
-    resultado = []
-    
-    for estacionamiento in estacionamientos:
-        # Contar reservas aceptadas para cada estacionamiento
-        reservas_aceptadas = db.query(Reserva).filter(
-            Reserva.estacionamiento_id == estacionamiento.id,
-            Reserva.fecha_reserva == fecha,
-            Reserva.estado == "aceptada"
-        ).count()
-        
-        espacios_disponibles = max(0, estacionamiento.espacios_total - reservas_aceptadas)
-        
-        resultado.append({
-            "id": estacionamiento.id,
-            "nombre": estacionamiento.nombre,
-            "direccion": estacionamiento.direccion,
-            "precio": estacionamiento.precio,
-            "horario": estacionamiento.horario,
-            "espacios_totales": estacionamiento.espacios_total,
-            "espacios_disponibles_base": estacionamiento.espacios_disponibles,
-            "reservas_aceptadas": reservas_aceptadas,
-            "espacios_disponibles_con_reservas": espacios_disponibles,
-            "fecha_consulta": fecha
-        })
-    
-    return resultado
-
 # ENDPOINT PARA OBTENER RESERVAS ACTIVAS DE UN ESTACIONAMIENTO
 @router.get("/activas/{estacionamiento_id}")
 def obtener_reservas_activas(estacionamiento_id: int, db: Session = Depends(get_db)):
     """
     Obtener el número de reservas activas (aceptadas) para un estacionamiento específico.
-    Incluye reservas de hoy hacia adelante.
+    Solo cuenta reservas para HOY y que estén dentro del horario actual.
     """
     # Verificar que el estacionamiento existe
     estacionamiento = db.query(Estacionamiento).filter(
@@ -464,49 +232,55 @@ def obtener_reservas_activas(estacionamiento_id: int, db: Session = Depends(get_
     if not estacionamiento:
         raise HTTPException(status_code=404, detail="Estacionamiento no encontrado")
     
-    # Obtener la fecha actual
-    fecha_actual = datetime.now().date()
+    # Obtener la fecha y hora actual
+    ahora = datetime.now()
+    fecha_actual = ahora.date()
+    hora_actual = ahora.time()
     
-    # CAMBIO: Buscar reservas activas desde HOY hacia adelante
-    # Esto es más lógico porque las reservas pasadas ya no deberían contar
+    # Solo reservas para HOY y dentro del horario
     reservas_activas = db.query(Reserva).filter(
         Reserva.estacionamiento_id == estacionamiento_id,
-        Reserva.fecha_reserva >= fecha_actual,  # Desde hoy hacia adelante
-        Reserva.estado == "aceptada"
-    ).all()
-    
-    # Para debug, mantener las consultas originales
-    todas_las_reservas = db.query(Reserva).filter(
-        Reserva.estacionamiento_id == estacionamiento_id
-    ).all()
-    
-    reservas_hoy = db.query(Reserva).filter(
-        Reserva.estacionamiento_id == estacionamiento_id,
         Reserva.fecha_reserva == fecha_actual,
-        Reserva.estado == "aceptada"
-    ).all()
-    
-    todas_reservas_activas = db.query(Reserva).filter(
-        Reserva.estacionamiento_id == estacionamiento_id,
-        Reserva.estado == "aceptada"
-    ).all()
-    
-    # Usar las reservas desde hoy hacia adelante
-    reservas_activas_count = len(reservas_activas)
+        Reserva.estado == "aceptada",
+        Reserva.hora_inicio <= hora_actual,
+        Reserva.hora_fin >= hora_actual
+    ).count()
     
     return {
         "estacionamiento_id": estacionamiento_id,
         "fecha": fecha_actual.isoformat(),
-        "reservas_activas": reservas_activas_count,
-        # Información adicional para debug
-        "debug_info": {
-            "total_reservas": len(todas_las_reservas),
-            "reservas_hoy": len(reservas_hoy),
-            "todas_activas": len(todas_reservas_activas),
-            "reservas_futuras_y_actuales": len(reservas_activas),
-            "fechas_reservas_activas": [r.fecha_reserva.isoformat() for r in reservas_activas],
-            "fechas_todas_activas": [r.fecha_reserva.isoformat() for r in todas_reservas_activas]
-        }
+        "hora_actual": hora_actual.strftime("%H:%M:%S"),
+        "reservas_activas": reservas_activas
+    }
+
+@router.post("/limpiar-reservas-pasadas")
+def limpiar_reservas_pasadas(db: Session = Depends(get_db)):
+    """
+    Limpiar reservas pasadas que ya deberían estar completadas
+    """
+    ahora = datetime.now()
+    fecha_actual = ahora.date()
+    hora_actual = ahora.time()
+    
+    # Marcar como completadas las reservas que ya terminaron
+    reservas_completadas = db.query(Reserva).filter(
+        Reserva.fecha_reserva < fecha_actual,
+        Reserva.estado == "aceptada"
+    ).update({"estado": "completada"})
+    
+    # También las de hoy que ya terminaron
+    reservas_hoy_completadas = db.query(Reserva).filter(
+        Reserva.fecha_reserva == fecha_actual,
+        Reserva.hora_fin < hora_actual,
+        Reserva.estado == "aceptada"
+    ).update({"estado": "completada"})
+    
+    db.commit()
+    
+    return {
+        "message": "Reservas limpiadas",
+        "reservas_pasadas_completadas": reservas_completadas,
+        "reservas_hoy_completadas": reservas_hoy_completadas
     }
 
 # ENDPOINT PARA ESTADÍSTICAS DEL DUEÑO

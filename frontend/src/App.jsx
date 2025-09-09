@@ -1,24 +1,39 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import Hero from "./components/Hero";   // 👈 importa tu componente
+import { AuthProvider } from "./contexts/AuthContext"; // Importar el AuthProvider
+import Landing from "./pages/LandingPage";
 import Login from "./pages/Login";
-import HomeDuenio from  "./pages/HomeDuenio";
-import HomeUsuario from  "./pages/HomeUsuario";
+import HomeDuenio from "./pages/HomeDuenio";
+import HomeUsuario from "./pages/HomeUsuario";
+import DetailDuenio from "./pages/DetailDuenio";
+import DetailUsuario from "./pages/DetailUsuario";
+import ReservaDuenio from "./pages/ReservaDuenio";
+import ReservaUsuario from "./pages/ReservaUsuario";
+import MisReservas from "./pages/MisReservas";
+import Register from "./pages/Register"
 
 function App() {
   return (
-    <Router>
-      <Routes>
-        {/* Landing */}
-        <Route path="/" element={<Hero />} />
+    <AuthProvider> {/* Envolver toda la aplicación con AuthProvider */}
+      <Router>
+        <Routes>
+          {/* Landing */}
+          <Route path="/" element={<Landing />} />
 
-        {/* Ejemplo: login y registro */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<h2>Pantalla de Registro</h2>} />
+          {/* Login y registro */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
 
-         <Route path="/home_duenio" element={<HomeDuenio />} />
-         <Route path="/home_usuario" element={<HomeUsuario />} />
-      </Routes>
-    </Router>
+          {/* Rutas principales */}
+          <Route path="/home_duenio" element={<HomeDuenio />} />
+          <Route path="/home_usuario" element={<HomeUsuario />} />
+          <Route path="/detail_Duenio" element={<DetailDuenio />} />
+          <Route path="/detail_usuario" element={<DetailUsuario />} />
+          <Route path="/reservas_duenio" element={<ReservaDuenio />} />
+          <Route path="/reservas_usuario" element={<ReservaUsuario />} />
+          <Route path="/mis_reservas" element={<MisReservas />} />
+        </Routes>
+      </Router>
+    </AuthProvider>
   );
 }
 

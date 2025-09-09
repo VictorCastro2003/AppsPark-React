@@ -2,6 +2,7 @@
 import { useState } from "react";
 import api from "../services/api";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext"; // Importar el contexto
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -9,6 +10,7 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const { login } = useAuth(); // Usar el contexto de autenticación
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -17,15 +19,18 @@ export default function Login() {
 
     try {
       const res = await api.post("/auth/login", { email, password });
-      localStorage.setItem("token", res.data.token);
-      localStorage.setItem("user", JSON.stringify(res.data.usuario));
+      
+      // Usar la función login del contexto en lugar de localStorage directamente
+      login(res.data.usuario, res.data.token);
 
+      // Navegar según el rol
       if (res.data.usuario.rol === "duenio") {
         navigate("/Home_Duenio");
       } else {
         navigate("/Home_Usuario");
       }
     } catch (err) {
+      console.error("Error en login:", err); // Debug
       setError("Error al iniciar sesión. Verifica tus credenciales.");
     } finally {
       setIsLoading(false);
