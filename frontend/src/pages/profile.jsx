@@ -467,9 +467,7 @@ const Profile = () => {
 
                 {/* Información adicional */}
                 <div className="text-center mt-4">
-                  <small className="text-muted">
-                    Tu foto de perfil se obtiene automáticamente desde tu cuenta de Google/Gravatar
-                  </small>
+                 
                 </div>
               </form>
             </div>

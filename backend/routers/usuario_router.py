@@ -1,8 +1,10 @@
+# usuario_router.py - VERSIÓN CORREGIDA
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from models.user import Usuario, RolEnum
-from schemas.user_schema import UsuarioCreate, UsuarioOut, UsuarioUpdate
+from schemas.user_schema import UsuarioCreate, UsuarioOut, UsuarioUpdate  # ✅ Ahora UsuarioUpdate existe
 from database import get_db
 import bcrypt
 import jwt
@@ -71,8 +73,13 @@ def update_usuario(
 ):
     """Actualizar perfil de usuario"""
     
+    print(f"🔍 DEBUG: Intentando actualizar usuario ID: {user_id}")
+    print(f"🔍 DEBUG: Usuario actual ID: {current_user.id}")
+    print(f"🔍 DEBUG: Datos recibidos: {data.dict()}")
+    
     # Verificar que el usuario solo puede actualizar su propio perfil (o sea admin)
     if current_user.id != user_id and current_user.rol != "admin":
+        print(f"❌ DEBUG: Sin permisos - Usuario {current_user.id} intentando actualizar {user_id}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tienes permisos para actualizar este usuario"
@@ -81,10 +88,13 @@ def update_usuario(
     # Obtener el usuario a actualizar
     user_to_update = db.query(Usuario).filter(Usuario.id == user_id).first()
     if not user_to_update:
+        print(f"❌ DEBUG: Usuario {user_id} no encontrado en la base de datos")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Usuario no encontrado"
+            detail=f"Usuario con ID {user_id} no encontrado"
         )
+    
+    print(f"✅ DEBUG: Usuario encontrado - ID: {user_to_update.id}, Nombre: {user_to_update.nombre}")
     
     # Verificar email único si se está cambiando
     if data.email and data.email != user_to_update.email:
@@ -97,7 +107,9 @@ def update_usuario(
     
     # Si se está cambiando la contraseña, verificar la actual
     if data.newPassword and data.currentPassword:
+        print(f"🔐 DEBUG: Intentando cambiar contraseña")
         if not bcrypt.checkpw(data.currentPassword.encode(), user_to_update.password.encode()):
+            print(f"❌ DEBUG: Contraseña actual incorrecta")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="La contraseña actual es incorrecta"
@@ -105,21 +117,33 @@ def update_usuario(
         # Hashear la nueva contraseña
         hashed_new_pw = bcrypt.hashpw(data.newPassword.encode(), bcrypt.gensalt()).decode()
         user_to_update.password = hashed_new_pw
+        print(f"✅ DEBUG: Contraseña actualizada")
     
     # Actualizar campos básicos
     if data.nombre is not None:
         user_to_update.nombre = data.nombre
+        print(f"✅ DEBUG: Nombre actualizado a: {data.nombre}")
     if data.email is not None:
         user_to_update.email = data.email
+        print(f"✅ DEBUG: Email actualizado a: {data.email}")
     
     # Solo admin puede cambiar roles
     if data.rol is not None and current_user.rol == "admin":
         user_to_update.rol = data.rol
+        print(f"✅ DEBUG: Rol actualizado a: {data.rol}")
     
-    db.commit()
-    db.refresh(user_to_update)
-    
-    return user_to_update
+    try:
+        db.commit()
+        db.refresh(user_to_update)
+        print(f"✅ DEBUG: Usuario actualizado exitosamente")
+        return user_to_update
+    except Exception as e:
+        print(f"❌ DEBUG: Error al guardar en BD: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al actualizar usuario: {str(e)}"
+        )
 
 @router.delete("/{user_id}")
 def delete_usuario(
@@ -146,37 +170,3 @@ def delete_usuario(
     db.commit()
     
     return {"message": "Usuario eliminado exitosamente"}
-
-
-# 2. ACTUALIZAR user_schema.py
-# schemas/user_schema.py
-from pydantic import BaseModel, EmailStr
-from typing import Optional
-from models.user import RolEnum
-
-class UsuarioBase(BaseModel):
-    nombre: str
-    email: EmailStr
-    rol: RolEnum
-
-class UsuarioCreate(UsuarioBase):
-    password: str
-
-class UsuarioUpdate(BaseModel):
-    """Schema para actualizar usuario"""
-    nombre: Optional[str] = None
-    email: Optional[EmailStr] = None
-    rol: Optional[RolEnum] = None
-    currentPassword: Optional[str] = None
-    newPassword: Optional[str] = None
-
-    class Config:
-        # Permitir campos adicionales que no estén en el schema
-        extra = "ignore"
-
-class UsuarioOut(UsuarioBase):
-    id: int
-    
-    class Config:
-        from_attributes = True  # Para SQLAlchemy v2
-        # orm_mode = True  # Para SQLAlchemy v1
