@@ -138,9 +138,9 @@ export default function Login() {
           <div className="mt-4 p-3 bg-light rounded">
             <h6 className="mb-2">Cuentas de prueba:</h6>
             <small className="text-muted">
-              <strong>Admin:</strong> user@example.com / string
+              <strong>Usuario:</strong> user@example.com / string
               <br />
-              <strong>Usuario:</strong> user2@example.com / string
+              <strong>Dueño:</strong> user2@example.com / string
             </small>
           </div>
         </div>

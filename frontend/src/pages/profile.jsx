@@ -315,7 +315,7 @@ const Profile = () => {
                     </div>
                   )}
                   <small className="text-muted">
-                    Cambiar tu email actualizará tu foto de perfil automáticamente
+                   
                   </small>
                 </div>
 

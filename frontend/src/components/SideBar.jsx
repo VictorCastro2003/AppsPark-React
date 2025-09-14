@@ -28,7 +28,7 @@ export default function Sidebar({ currentPage = "inicio" }) {
         icon: "bi-calendar3", 
         label: "Mis Reservas", 
         key: "reservas", 
-        route: isDuenio ? "/reservas-duenio" : "/mis_reservas" 
+        route: isDuenio ? "/reservas_duenio" : "/mis_reservas" 
       },
       { 
         icon: "bi-person-fill", 
