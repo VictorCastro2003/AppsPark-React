@@ -70,11 +70,11 @@ const ParkingOwnerDetail = ({ onBack }) => {
       console.log('🔍 Detectando espacios para estacionamiento ID:', parkingData.id);
       
       // Usar el endpoint correcto que ya tienes funcionando en HomeDuenio
-      const response = await fetch('http://localhost:8000/detect/estacionamiento/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parkingData.id), // Enviar solo el ID como en HomeDuenio
-      });
+    const response = await fetch('http://localhost:8000/detect/estacionamiento/', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ estacionamiento_id: parkingData.id }), // ✅ CORRECTO
+});
 
       if (response.ok) {
         const data = await response.json();

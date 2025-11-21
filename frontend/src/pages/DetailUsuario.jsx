@@ -59,11 +59,11 @@ export default function DetalleEstacionamiento() {
     try {
       console.log('🔄 Cargando detección YOLO para estacionamiento:', estacionamientoId);
       
-      const response = await fetch('http://localhost:8000/detect/estacionamiento/', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(estacionamientoId)
-      });
+     const response = await fetch('http://localhost:8000/detect/estacionamiento/', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({ estacionamiento_id: estacionamientoId }) // ✅ CORRECTO
+});
 
       if (response.ok) {
         const data = await response.json();
