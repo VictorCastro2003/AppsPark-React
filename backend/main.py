@@ -1,7 +1,11 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from ultralytics import YOLO
+from fastapi import WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from datetime import datetime
 import numpy as np
 import cv2
 import base64
@@ -12,20 +16,42 @@ import torch
 from fastapi import Body
 
 
+# ============================================
+# MIDDLEWARE PERSONALIZADO PARA CORS EN ARCHIVOS ESTÁTICOS
+# ============================================
+class CORSStaticFilesMiddleware(BaseHTTPMiddleware):
+    """Middleware para agregar headers CORS a archivos estáticos"""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Si es una solicitud a /videos/, agregar headers CORS
+        if request.url.path.startswith('/videos/'):
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = '*'
+            response.headers['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range'
+        
+        return response
+
+
 app = FastAPI(
     title="Sistema de Detección de Estacionamiento",
     description="API para detección de espacios de estacionamiento usando YOLO",
     version="1.0.0"
 )
 
-# CORS config
+# CORS config - DEBE IR PRIMERO
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]  # Importante para videos
 )
+
+# Agregar middleware personalizado para archivos estáticos
+app.add_middleware(CORSStaticFilesMiddleware)
 
 print("=== IMPORTANDO ROUTERS ===")
 
@@ -85,7 +111,7 @@ def load_parking_zones(estacionamiento_id: int = None):
     Si tampoco existe, usa zonas por defecto.
     """
     print(f"\n{'='*50}")
-    print(f"🔄 CARGANDO BOUNDING BOXES")
+    print(f"📄 CARGANDO BOUNDING BOXES")
     print(f"   Estacionamiento ID recibido: {estacionamiento_id}")
     print(f"   Tipo: {type(estacionamiento_id)}")
     print(f"{'='*50}")
@@ -430,7 +456,7 @@ async def detect_estacionamiento(estacionamiento_id: int = Body(..., embed=True)
             return JSONResponse(status_code=400, content={"error": "No se pudo leer la imagen"})
         
         # IMPORTANTE: Pasar el ID para cargar bounding boxes específicos
-        print(f"\n🔄 Llamando process_detection con ID: {estacionamiento_id}")
+        print(f"\n📄 Llamando process_detection con ID: {estacionamiento_id}")
         result = process_detection(image_cv2, estacionamiento_id)
         
         print(f"\n{'='*60}")
@@ -487,6 +513,164 @@ async def health_check():
         "features": ["object_detection", "color_analysis", "dual_confirmation"]
     }
 
+
+# ============================================
+# MONTAR ARCHIVOS ESTÁTICOS CON CORS
+# ============================================
+app.mount("/videos", StaticFiles(directory="videos"), name="videos")
+
+
+# Endpoint para verificar si existe video
+@app.get("/check-video/{estacionamiento_id}")
+async def check_video_exists(estacionamiento_id: int):
+    """Verifica si existe un video para el estacionamiento"""
+    video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm']
+    
+    for ext in video_extensions:
+        video_path = f"videos/{estacionamiento_id}{ext}"
+        if os.path.exists(video_path):
+            return {
+                "exists": True,
+                "path": video_path,
+                "url": f"/videos/{estacionamiento_id}{ext}",
+                "extension": ext
+            }
+    
+    return {
+        "exists": False,
+        "path": None,
+        "url": None
+    }
+
+
+# Endpoint para obtener video directamente con CORS explícito
+@app.get("/video/{estacionamiento_id}")
+async def get_video(estacionamiento_id: int):
+    """Retorna el archivo de video si existe CON HEADERS CORS"""
+    video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm']
+    
+    for ext in video_extensions:
+        video_path = f"videos/{estacionamiento_id}{ext}"
+        if os.path.exists(video_path):
+            media_types = {
+                '.mp4': 'video/mp4',
+                '.avi': 'video/x-msvideo',
+                '.mov': 'video/quicktime',
+                '.mkv': 'video/x-matroska',
+                '.webm': 'video/webm'
+            }
+            
+            # Crear respuesta con headers CORS
+            response = FileResponse(
+                video_path, 
+                media_type=media_types.get(ext, 'video/mp4'),
+                filename=f"{estacionamiento_id}{ext}"
+            )
+            
+            # Agregar headers CORS manualmente
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = '*'
+            
+            return response
+    
+    return JSONResponse(
+        status_code=404, 
+        content={"error": f"Video no encontrado para estacionamiento {estacionamiento_id}"}
+    )
+
+
+# ============================================
+# WebSocket para streaming de video
+# ============================================
+@app.websocket("/ws/detect/stream/{estacionamiento_id}")
+async def websocket_video_stream(websocket: WebSocket, estacionamiento_id: int):
+    """WebSocket para análisis en tiempo real de frames de video"""
+    await websocket.accept()
+    print(f"✅ WebSocket conectado - Estacionamiento {estacionamiento_id}")
+    
+    model = YOLO(model_path)
+    parking_zones = load_parking_zones(estacionamiento_id)
+    
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            
+            if message.get('type') == 'frame':
+                # Decodificar imagen base64
+                img_data = message['data']
+                if ',' in img_data:
+                    img_data = img_data.split(',')[1]
+                
+                img_bytes = base64.b64decode(img_data)
+                nparr = np.frombuffer(img_bytes, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if frame is None:
+                    await websocket.send_json({"error": "Frame inválido"})
+                    continue
+                
+                # Detectar con YOLO
+                results = model(frame, **DETECTION_CONFIG)
+                
+                all_objects = []
+                if results[0].boxes is not None:
+                    for box in results[0].boxes:
+                        class_id = int(box.cls[0])
+                        confidence = float(box.conf[0])
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                        bbox_area = (x2 - x1) * (y2 - y1)
+                        class_name = model.names[class_id]
+                        
+                        is_significant, _ = is_significant_object(confidence, bbox_area, (x1, y1, x2, y2))
+                        
+                        if is_significant:
+                            all_objects.append({
+                                'center': (float((x1+x2)/2), float((y1+y2)/2)),
+                                'bbox': (float(x1), float(y1), float(x2), float(y2)),
+                                'class': class_name,
+                                'confidence': float(confidence)
+                            })
+                
+                # Análisis de color
+                color_detections = detect_by_color_analysis(frame, parking_zones)
+                
+                # Analizar zonas
+                occupied_zones, zone_details = analyze_parking_zones_simple(
+                    all_objects, color_detections, parking_zones
+                )
+                
+                # Anotar imagen
+                annotated = draw_simple_annotations(
+                    frame, parking_zones, occupied_zones, zone_details, all_objects
+                )
+                
+                # Codificar resultado
+                _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                annotated_b64 = base64.b64encode(buffer).decode()
+                
+                # Enviar resultado
+                await websocket.send_json({
+                    "type": "detection_result",
+                    "timestamp": datetime.now().isoformat(),
+                    "image": f"data:image/jpeg;base64,{annotated_b64}",
+                    "total": len(parking_zones),
+                    "occupied": len(occupied_zones),
+                    "available": len(parking_zones) - len(occupied_zones),
+                    "objects": len(all_objects),
+                    "zones": zone_details
+                })
+                
+            elif message.get('type') == 'ping':
+                await websocket.send_json({"type": "pong"})
+                
+    except WebSocketDisconnect:
+        print(f"WebSocket desconectado - Estacionamiento {estacionamiento_id}")
+    except Exception as e:
+        print(f"❌ Error WebSocket: {e}")
+        traceback.print_exc()
+        await websocket.close()
 
 if __name__ == "__main__":
     import uvicorn
