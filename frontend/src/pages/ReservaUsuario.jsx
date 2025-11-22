@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
+import PublicidadBanner from "../components/PublicidadBanner";
 
 const API_URL = "http://localhost:8000";
 
@@ -395,6 +396,7 @@ export default function ReservaUsuario() {
             </div>
           </div>
         </div>
+         <PublicidadBanner />
       </div>
     </div>
   );

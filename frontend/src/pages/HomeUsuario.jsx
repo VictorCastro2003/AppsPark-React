@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
+import PublicidadBanner from '../components/PublicidadBanner';
 
 // URL de tu backend FastAPI
 const API_URL = "http://localhost:8000";
@@ -432,7 +433,9 @@ export default function HomeUsuario() {
             )}
           </>
         )}
+          <PublicidadBanner />
       </div>
+    
     </div>
   );
 }

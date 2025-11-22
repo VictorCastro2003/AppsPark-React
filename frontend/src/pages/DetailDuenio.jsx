@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 
+
 const ParkingOwnerDetail = ({ onBack }) => {
   const location = useLocation();
   const navigate = useNavigate();
