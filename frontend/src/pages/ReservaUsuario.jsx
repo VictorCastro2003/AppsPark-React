@@ -15,13 +15,18 @@ export default function ReservaUsuario() {
 
   // Estados del formulario
   const [placaVehiculo, setPlacaVehiculo] = useState("");
-  const [fechaReserva, setFechaReserva] = useState("");
-  const [horaInicio, setHoraInicio] = useState("");
-  const [horaFin, setHoraFin] = useState("");
+  const [fechaReserva, setFechaReserva] = useState(location.state?.fechaReserva || "");
+  const [horaInicio, setHoraInicio] = useState(location.state?.horaInicio || "");
+  const [horaFin, setHoraFin] = useState(location.state?.horaFin || "");
+  const [selectedCajonId, setSelectedCajonId] = useState(location.state?.selectedCajonId ?? null);
   const [mensaje, setMensaje] = useState(null);
   const [loading, setLoading] = useState(false);
   const [estacionamientoActual, setEstacionamientoActual] = useState(estacionamiento);
   const [user] = useState({ username: "Usuario" }); // Simular usuario logueado
+  const [zonas, setZonas] = useState([]);
+  const [reservasFecha, setReservasFecha] = useState([]);
+  const [isLoadingReservasFecha, setIsLoadingReservasFecha] = useState(false);
+  const [isLoadingZonas, setIsLoadingZonas] = useState(false);
 
   // Validación mejorada
   const puedeReservar = 
@@ -31,7 +36,33 @@ export default function ReservaUsuario() {
     horaFin &&
     !loading &&
     new Date(`${fechaReserva}T${horaInicio}`) < new Date(`${fechaReserva}T${horaFin}`) &&
-    estacionamientoActual?.espacios_disponibles > 0;
+    estacionamientoActual?.espacios_disponibles > 0 &&
+    selectedCajonId;
+
+  const getCajonKey = (r) => {
+    const key = r.cajon_numero ?? r.cajon_id;
+    const num = parseInt(key, 10);
+    return Number.isFinite(num) ? num : null;
+  };
+  const reservedIds = new Set(
+    (reservasFecha || [])
+      .map(getCajonKey)
+      .filter((v) => v !== null)
+  );
+  const reservasByCajon = new Map(
+    (reservasFecha || [])
+      .map((r) => [getCajonKey(r), r])
+      .filter(([k]) => k !== null)
+  );
+  const formatTime = (t) => {
+    if (!t) return "";
+    return typeof t === "string" ? t.slice(0, 5) : String(t).slice(0, 5);
+  };
+  const getZoneStatus = (zone) => {
+    if (zone.occupied) return "occupied";
+    if (reservedIds.has(zone.id)) return "reserved";
+    return "free";
+  };
 
   // Cargar datos actuales del estacionamiento
   useEffect(() => {
@@ -39,6 +70,33 @@ export default function ReservaUsuario() {
       cargarEstacionamientoActual();
     }
   }, [estacionamiento]);
+
+  useEffect(() => {
+    if (estacionamiento?.id) {
+      cargarZonas();
+    }
+  }, [estacionamiento]);
+
+  useEffect(() => {
+    cargarReservasPorFecha();
+  }, [estacionamiento?.id, fechaReserva, horaInicio, horaFin]);
+
+  useEffect(() => {
+    if (!selectedCajonId) return;
+    const reservedIds = new Set(
+      (reservasFecha || [])
+        .map((r) => {
+          const key = r.cajon_numero ?? r.cajon_id;
+          const num = parseInt(key, 10);
+          return Number.isFinite(num) ? num : null;
+        })
+        .filter((v) => v !== null)
+    );
+    const selectedZone = (zonas || []).find(z => z.id === selectedCajonId);
+    if (selectedZone?.occupied || reservedIds.has(selectedCajonId)) {
+      setSelectedCajonId(null);
+    }
+  }, [zonas, reservasFecha, selectedCajonId]);
 
   const cargarEstacionamientoActual = async () => {
     try {
@@ -59,6 +117,54 @@ export default function ReservaUsuario() {
     }
   };
 
+  const cargarZonas = async () => {
+    if (!estacionamiento?.id) return;
+    setIsLoadingZonas(true);
+    try {
+      const response = await fetch(`${API_URL}/detect/estacionamiento/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estacionamiento_id: estacionamiento.id })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data.zones)) setZonas(data.zones);
+      }
+    } catch (error) {
+      setZonas([]);
+    } finally {
+      setIsLoadingZonas(false);
+    }
+  };
+
+  const cargarReservasPorFecha = async () => {
+    if (!estacionamiento?.id || !fechaReserva) {
+      setReservasFecha([]);
+      return;
+    }
+    setIsLoadingReservasFecha(true);
+    try {
+      const params = new URLSearchParams({ fecha: fechaReserva });
+      if (horaInicio && horaFin) {
+        params.append("hora_inicio", horaInicio);
+        params.append("hora_fin", horaFin);
+      }
+      const response = await fetch(
+        `${API_URL}/reservas/estacionamiento/${estacionamiento.id}?${params.toString()}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setReservasFecha(Array.isArray(data) ? data : []);
+      } else {
+        setReservasFecha([]);
+      }
+    } catch (error) {
+      setReservasFecha([]);
+    } finally {
+      setIsLoadingReservasFecha(false);
+    }
+  };
+
   const confirmarReserva = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -68,6 +174,7 @@ export default function ReservaUsuario() {
       const reservaData = {
         estacionamiento_id: estacionamiento.id,
         usuario_id: 1, // Reemplazar con el ID del usuario logueado
+        cajon_id: selectedCajonId,
         placa_vehiculo: placaVehiculo,
         fecha_reserva: fechaReserva,
         hora_inicio: horaInicio,
@@ -269,6 +376,81 @@ export default function ReservaUsuario() {
                 </div>
               )}
 
+              {!selectedCajonId && (
+                <div className="alert alert-warning">
+                  ⚠️ Selecciona un espacio disponible en el detalle antes de continuar.
+                </div>
+              )}
+
+              {selectedCajonId && (
+                <div className="alert alert-info">
+                  🅿️ Espacio seleccionado: <strong>#{selectedCajonId}</strong>
+                </div>
+              )}
+
+              {/* Selector de espacios */}
+              <div className="card mb-4">
+                <div className="card-header d-flex justify-content-between align-items-center">
+                  <h5 className="mb-0">Selecciona un espacio</h5>
+                  {(isLoadingZonas || isLoadingReservasFecha) && (
+                    <div className="spinner-border spinner-border-sm" role="status"></div>
+                  )}
+                </div>
+                <div className="card-body">
+                  {!fechaReserva ? (
+                    <div className="alert alert-warning mb-0">
+                      Selecciona fecha y horario para ver la disponibilidad.
+                    </div>
+                  ) : zonas && zonas.length > 0 ? (
+                    <>
+                      <div className="parking-grid">
+                        {zonas.map((zone) => {
+                          const status = getZoneStatus(zone);
+                          const isSelected = selectedCajonId === zone.id;
+                          const isDisabled = status !== "free";
+                          const reservaInfo = reservasByCajon.get(zone.id);
+                          const tooltip =
+                            status === "reserved"
+                              ? `Reservado: ${reservaInfo?.usuario_nombre || `Usuario ${reservaInfo?.usuario_id || ""}`}. ${formatTime(reservaInfo?.hora_inicio)}-${formatTime(reservaInfo?.hora_fin)}`
+                              : status === "occupied"
+                              ? "Ocupado fisico"
+                              : "Libre";
+                          return (
+                            <button
+                              key={zone.id}
+                            type="button"
+                            className={`parking-slot ${status} ${isSelected ? "selected" : ""}`}
+                            aria-disabled={isDisabled}
+                            onClick={() => {
+                              if (!isDisabled) setSelectedCajonId(zone.id);
+                            }}
+                            data-tooltip={`Espacio ${zone.id} - ${tooltip}`}
+                          >
+                              {zone.id}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="d-flex flex-wrap gap-3 mt-3 small text-muted">
+                        <span className="d-flex align-items-center gap-2">
+                          <span className="legend-box free"></span>Libre
+                        </span>
+                        <span className="d-flex align-items-center gap-2">
+                          <span className="legend-box reserved"></span>Reservado (solo en esta fecha)
+                        </span>
+                        <span className="d-flex align-items-center gap-2">
+                          <span className="legend-box occupied"></span>Ocupado
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="alert alert-warning mb-0">
+                      No hay zonas configuradas para este estacionamiento.
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Formulario de reserva */}
               <div className="card">
                 <div className="card-header">
@@ -398,6 +580,92 @@ export default function ReservaUsuario() {
         </div>
          <PublicidadBanner />
       </div>
+
+      <style>{`
+        .parking-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+          gap: 10px;
+          background: linear-gradient(180deg, rgba(248,249,255,0.9), rgba(255,255,255,0.95));
+          border-radius: 12px;
+          padding: 12px;
+          border: 1px solid #e5e7ff;
+        }
+        .parking-slot {
+          border: 2px solid transparent;
+          border-radius: 10px;
+          height: 56px;
+          font-weight: 600;
+          background: #f1f3f5;
+          color: #343a40;
+          transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
+          position: relative;
+        }
+        .parking-slot.free {
+          background: #e9f7ef;
+          border-color: #28a745;
+          color: #1e7e34;
+        }
+        .parking-slot.free:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 18px rgba(40, 167, 69, 0.2);
+        }
+        .parking-slot.reserved {
+          background: #fff3e0;
+          border-color: #fd7e14;
+          color: #b45309;
+          filter: saturate(0.9);
+        }
+        .parking-slot.occupied {
+          background: #fdecea;
+          border-color: #dc3545;
+          color: #b02a37;
+          cursor: not-allowed;
+          filter: grayscale(0.1);
+        }
+        .parking-slot[aria-disabled="true"] {
+          cursor: not-allowed;
+        }
+        .parking-slot[data-tooltip]:hover::after {
+          content: attr(data-tooltip);
+          position: absolute;
+          left: 50%;
+          bottom: calc(100% + 8px);
+          transform: translateX(-50%);
+          background: rgba(17, 24, 39, 0.95);
+          color: #fff;
+          padding: 6px 10px;
+          border-radius: 8px;
+          font-size: 12px;
+          white-space: nowrap;
+          z-index: 10;
+          box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+        .parking-slot[data-tooltip]:hover::before {
+          content: "";
+          position: absolute;
+          left: 50%;
+          bottom: calc(100% + 2px);
+          transform: translateX(-50%);
+          border: 6px solid transparent;
+          border-top-color: rgba(17, 24, 39, 0.95);
+          z-index: 9;
+        }
+        .parking-slot.selected {
+          box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.35);
+          transform: translateY(-1px);
+        }
+        .legend-box {
+          width: 14px;
+          height: 14px;
+          border-radius: 4px;
+          display: inline-block;
+          border: 2px solid transparent;
+        }
+        .legend-box.free { background: #e9f7ef; border-color: #28a745; }
+        .legend-box.reserved { background: #fff3e0; border-color: #fd7e14; }
+        .legend-box.occupied { background: #fdecea; border-color: #dc3545; }
+      `}</style>
     </div>
   );
 }

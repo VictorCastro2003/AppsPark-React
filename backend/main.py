@@ -83,11 +83,24 @@ try:
 except ImportError as e:
     print(f"✗ Error importando reserva_router: {e}")
 
+try:
+    from routers.notificacion_router import router as notificacion_router
+    app.include_router(notificacion_router)
+    print("✓ Router notificaciones importado exitosamente")
+except ImportError as e:
+    print(f"✗ Error importando notificacion_router: {e}")
+
 print("=== FIN IMPORTACIÓN ROUTERS ===\n")
 
 model_path = "yolo11n.pt"
 if not os.path.exists(model_path):
     raise FileNotFoundError(f"Modelo no encontrado: {model_path}")
+
+# Cargar modelo una sola vez (singleton)
+MODEL = YOLO(model_path)
+
+# Cache simple de zonas por estacionamiento (con validación por mtime)
+PARKING_ZONES_CACHE = {}
 
 DETECTION_CONFIG = {"conf": 0.2, "iou": 0.4}
 
@@ -126,6 +139,11 @@ def load_parking_zones(estacionamiento_id: int = None):
         print(f"   ¿Existe? {os.path.exists(specific_path)}")
         
         if os.path.exists(specific_path):
+            # Cache por mtime
+            mtime = os.path.getmtime(specific_path)
+            cached = PARKING_ZONES_CACHE.get(specific_path)
+            if cached and cached["mtime"] == mtime:
+                return cached["zones"]
             try:
                 with open(specific_path, 'r') as f:
                     data = json.load(f)
@@ -134,6 +152,7 @@ def load_parking_zones(estacionamiento_id: int = None):
                     # Mostrar primera zona para verificar
                     if data and len(data) > 0:
                         print(f"   Primera zona (verificación): {data[0]}")
+                    PARKING_ZONES_CACHE[specific_path] = {"zones": data, "mtime": mtime}
                     return data
             except Exception as e:
                 print(f"❌ Error leyendo {specific_path}: {e}")
@@ -150,11 +169,17 @@ def load_parking_zones(estacionamiento_id: int = None):
     print(f"   ¿Existe? {os.path.exists(general_path)}")
     
     if os.path.exists(general_path):
+        # Cache por mtime
+        mtime = os.path.getmtime(general_path)
+        cached = PARKING_ZONES_CACHE.get(general_path)
+        if cached and cached["mtime"] == mtime:
+            return cached["zones"]
         try:
             with open(general_path, 'r') as f:
                 data = json.load(f)
                 print(f"✅ Zonas cargadas desde: {general_path}")
                 print(f"   Cantidad de zonas: {len(data)}")
+                PARKING_ZONES_CACHE[general_path] = {"zones": data, "mtime": mtime}
                 return data
         except Exception as e:
             print(f"❌ Error leyendo {general_path}: {e}")
@@ -322,7 +347,6 @@ def draw_simple_annotations(image, parking_zones, occupied_zones, zone_details, 
 
 def process_detection(image_cv2, estacionamiento_id=None):
     """Función común para procesar detección"""
-    model = YOLO(model_path)
     parking_zones = load_parking_zones(estacionamiento_id)
     
     print(f"\n=== DETECCIÓN DE ESTACIONAMIENTO ===")
@@ -330,7 +354,7 @@ def process_detection(image_cv2, estacionamiento_id=None):
     print(f"Zonas a analizar: {len(parking_zones)}")
     
     # Detección YOLO
-    results = model(image_cv2, **DETECTION_CONFIG)
+    results = MODEL(image_cv2, **DETECTION_CONFIG)
     all_objects = []
     
     if results[0].boxes is not None:
@@ -339,7 +363,7 @@ def process_detection(image_cv2, estacionamiento_id=None):
             confidence = float(box.conf[0])
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
             bbox_area = (x2 - x1) * (y2 - y1)
-            class_name = model.names[class_id]
+            class_name = MODEL.names[class_id]
             is_significant, reason = is_significant_object(confidence, bbox_area, (x1, y1, x2, y2))
             
             if is_significant:
@@ -588,31 +612,53 @@ async def websocket_video_stream(websocket: WebSocket, estacionamiento_id: int):
     """WebSocket para análisis en tiempo real de frames de video"""
     await websocket.accept()
     print(f"✅ WebSocket conectado - Estacionamiento {estacionamiento_id}")
-    
-    model = YOLO(model_path)
+
     parking_zones = load_parking_zones(estacionamiento_id)
+    jpeg_quality = 70
+    display_width = None
     
     try:
         while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            
-            if message.get('type') == 'frame':
-                # Decodificar imagen base64
-                img_data = message['data']
-                if ',' in img_data:
-                    img_data = img_data.split(',')[1]
-                
-                img_bytes = base64.b64decode(img_data)
-                nparr = np.frombuffer(img_bytes, np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            data = await websocket.receive()
+
+            if data.get("type") == "websocket.receive":
+                message_text = data.get("text")
+                message_bytes = data.get("bytes")
+
+                # Configuración opcional
+                if message_text:
+                    message = json.loads(message_text)
+                    if message.get("type") == "config":
+                        if "jpeg_quality" in message:
+                            jpeg_quality = int(message["jpeg_quality"])
+                        if "display_width" in message:
+                            display_width = message["display_width"]
+                        continue
+
+                    if message.get("type") != "frame":
+                        continue
+
+                    img_data = message.get("data")
+                    if not img_data:
+                        continue
+                    if ',' in img_data:
+                        img_data = img_data.split(',')[1]
+                    img_bytes = base64.b64decode(img_data)
+                    nparr = np.frombuffer(img_bytes, np.uint8)
+                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                elif message_bytes:
+                    nparr = np.frombuffer(message_bytes, np.uint8)
+                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                else:
+                    continue
                 
                 if frame is None:
                     await websocket.send_json({"error": "Frame inválido"})
                     continue
                 
                 # Detectar con YOLO
-                results = model(frame, **DETECTION_CONFIG)
+                results = MODEL(frame, **DETECTION_CONFIG)
                 
                 all_objects = []
                 if results[0].boxes is not None:
@@ -621,7 +667,7 @@ async def websocket_video_stream(websocket: WebSocket, estacionamiento_id: int):
                         confidence = float(box.conf[0])
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                         bbox_area = (x2 - x1) * (y2 - y1)
-                        class_name = model.names[class_id]
+                        class_name = MODEL.names[class_id]
                         
                         is_significant, _ = is_significant_object(confidence, bbox_area, (x1, y1, x2, y2))
                         
@@ -645,9 +691,18 @@ async def websocket_video_stream(websocket: WebSocket, estacionamiento_id: int):
                 annotated = draw_simple_annotations(
                     frame, parking_zones, occupied_zones, zone_details, all_objects
                 )
+
+                # Reducir tamaño de salida si se solicita (solo para envío)
+                if display_width and isinstance(display_width, int) and display_width > 0:
+                    h, w = annotated.shape[:2]
+                    if w > display_width:
+                        scale = display_width / w
+                        new_w = display_width
+                        new_h = int(h * scale)
+                        annotated = cv2.resize(annotated, (new_w, new_h))
                 
                 # Codificar resultado
-                _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
                 annotated_b64 = base64.b64encode(buffer).decode()
                 
                 # Enviar resultado

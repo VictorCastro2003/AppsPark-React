@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, ForeignKey, DateTime, String, Time
+from sqlalchemy import Column, Integer, ForeignKey, DateTime, String, Time, Boolean, Float
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
@@ -15,6 +15,11 @@ class Reserva(Base):
     hora_inicio = Column(Time, nullable=True)
     hora_fin = Column(Time, nullable=True)
     placa_vehiculo = Column(String(20), nullable=True)
+    salida_token = Column(String(64), nullable=True, index=True)
+    salida_usada = Column(Boolean, default=False)
+    hora_salida = Column(DateTime, nullable=True)
+    minutos_exceso = Column(Integer, nullable=True)
+    costo_extra = Column(Float, nullable=True)
 
     usuario = relationship("Usuario", back_populates="reservas")
     cajon = relationship("Cajon", back_populates="reservas")

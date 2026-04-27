@@ -1,181 +1,176 @@
-# video_detection.py - Añadir estos endpoints a main.py
+# video_detection.py - SINCRONIZADO CON FRONTEND
+# Optimizado para que el backend procese a la velocidad del frontend
 
-from fastapi import WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi import WebSocket, WebSocketDisconnect, UploadFile, File, Body
+from fastapi.responses import StreamingResponse, JSONResponse
 import asyncio
 import cv2
 import base64
 import json
 import time
+import os
+import traceback
+import numpy as np
 from typing import Optional
 from datetime import datetime
+from ultralytics import YOLO
+from concurrent.futures import ThreadPoolExecutor
+import torch
+
+# Thread pool optimizado
+executor = ThreadPoolExecutor(max_workers=2)  # Reducido a 2 para WebSocket
 
 # ============================================
-# ENDPOINT 1: Análisis de Video (archivo)
+# FUNCIONES AUXILIARES OPTIMIZADAS
 # ============================================
-@app.post("/detect/video/")
-async def detect_video(
-    file: UploadFile = File(...),
-    frame_skip: int = 5,  # Procesar 1 de cada N frames
-    max_frames: int = 100  # Máximo de frames a procesar
-):
-    """
-    Analiza un archivo de video y retorna estadísticas agregadas
-    """
+
+def process_single_frame_fast(frame, model, parking_zones):
+    """Procesa un frame de forma ULTRA rápida para WebSocket"""
     try:
-        # Guardar video temporalmente
-        temp_path = f"temp_video_{int(time.time())}.mp4"
-        with open(temp_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+        # Detección con resolución muy baja para velocidad
+        results = model.predict(frame, verbose=False, imgsz=320, conf=0.25)
         
-        # Abrir video
-        cap = cv2.VideoCapture(temp_path)
-        if not cap.isOpened():
-            os.remove(temp_path)
-            return JSONResponse(status_code=400, content={"error": "No se pudo abrir el video"})
+        all_objects = []
+        if results[0].boxes is not None and len(results[0].boxes) > 0:
+            for box in results[0].boxes:
+                class_id = int(box.cls[0])
+                confidence = float(box.conf[0])
+                
+                if confidence < 0.25:
+                    continue
+                    
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                class_name = model.names[class_id]
+                
+                # Solo vehículos
+                if class_name in ['car', 'truck', 'bus', 'motorcycle']:
+                    all_objects.append({
+                        'center': (float((x1+x2)/2), float((y1+y2)/2)),
+                        'bbox': (float(x1), float(y1), float(x2), float(y2)),
+                        'class': class_name,
+                        'confidence': float(confidence)
+                    })
         
-        # Info del video
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
-        model = YOLO(model_path)
-        parking_zones = load_parking_zones()
-        
-        # Resultados por frame
-        frame_results = []
-        processed_count = 0
-        frame_idx = 0
-        
-        print(f"\n=== PROCESANDO VIDEO ===")
-        print(f"FPS: {fps}, Total frames: {total_frames}")
-        print(f"Resolución: {width}x{height}")
-        
-        while cap.isOpened() and processed_count < max_frames:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            # Saltar frames según frame_skip
-            if frame_idx % frame_skip != 0:
-                frame_idx += 1
+        # Análisis rápido de zonas usando point_in_polygon
+        occupied_zones = set()
+        for zone_idx, zone in enumerate(parking_zones):
+            zone_points = zone.get('points', [])
+            if not zone_points:
                 continue
-            
-            # Detectar objetos
-            results = model(frame, **DETECTION_CONFIG)
-            
-            all_objects = []
-            if results[0].boxes is not None:
-                for box in results[0].boxes:
-                    class_id = int(box.cls[0])
-                    confidence = float(box.conf[0])
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    bbox_area = (x2 - x1) * (y2 - y1)
-                    class_name = model.names[class_id]
-                    
-                    is_significant, reason = is_significant_object(confidence, bbox_area, (x1, y1, x2, y2))
-                    
-                    if is_significant:
-                        center_x = (x1 + x2) / 2
-                        center_y = (y1 + y2) / 2
-                        all_objects.append({
-                            'center': (float(center_x), float(center_y)),
-                            'bbox': (float(x1), float(y1), float(x2), float(y2)),
-                            'class': class_name,
-                            'confidence': float(confidence)
-                        })
-            
-            # Análisis de color
-            color_detections = detect_by_color_analysis(frame, parking_zones)
-            
-            # Analizar zonas
-            occupied_zones, zone_details = analyze_parking_zones_simple(
-                all_objects, color_detections, parking_zones
-            )
-            
-            frame_results.append({
-                'frame': frame_idx,
-                'timestamp': frame_idx / fps if fps > 0 else 0,
-                'occupied': len(occupied_zones),
-                'available': len(parking_zones) - len(occupied_zones),
-                'objects_detected': len(all_objects),
-                'zones': zone_details
-            })
-            
-            processed_count += 1
-            frame_idx += 1
-            
-            if processed_count % 10 == 0:
-                print(f"Procesados {processed_count} frames...")
-        
-        cap.release()
-        os.remove(temp_path)
-        
-        # Calcular estadísticas agregadas
-        avg_occupied = sum(r['occupied'] for r in frame_results) / len(frame_results) if frame_results else 0
-        max_occupied = max(r['occupied'] for r in frame_results) if frame_results else 0
-        min_occupied = min(r['occupied'] for r in frame_results) if frame_results else 0
-        
-        # Último frame anotado
-        last_annotated = None
-        if frame_results:
-            cap = cv2.VideoCapture(temp_path) if os.path.exists(temp_path) else None
-            # Ya no podemos obtener el último frame, usamos el último resultado
+                
+            for obj in all_objects:
+                # Verificar si el centro está en la zona
+                if point_in_polygon_fast(obj['center'], zone_points):
+                    occupied_zones.add(zone_idx)
+                    break
         
         return {
-            "success": True,
-            "video_info": {
-                "fps": fps,
-                "total_frames": total_frames,
-                "duration_seconds": total_frames / fps if fps > 0 else 0,
-                "resolution": f"{width}x{height}"
-            },
-            "processing_info": {
-                "frames_processed": processed_count,
-                "frame_skip": frame_skip
-            },
-            "statistics": {
-                "total_zones": len(parking_zones),
-                "avg_occupied": round(avg_occupied, 2),
-                "max_occupied": max_occupied,
-                "min_occupied": min_occupied,
-                "avg_available": round(len(parking_zones) - avg_occupied, 2)
-            },
-            "frame_results": frame_results
+            'occupied': len(occupied_zones),
+            'available': len(parking_zones) - len(occupied_zones),
+            'total': len(parking_zones),
+            'objects': all_objects
         }
         
     except Exception as e:
-        print(f"Error procesando video: {e}")
-        traceback.print_exc()
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        print(f"Error procesando frame: {e}")
+        return None
+
+
+def point_in_polygon_fast(point, polygon):
+    """Versión rápida de point_in_polygon"""
+    x, y = point
+    n = len(polygon)
+    inside = False
+    p1x, p1y = polygon[0]
+    for i in range(1, n + 1):
+        p2x, p2y = polygon[i % n]
+        if y > min(p1y, p2y):
+            if y <= max(p1y, p2y):
+                if x <= max(p1x, p2x):
+                    if p1y != p2y:
+                        xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                    if p1x == p2x or x <= xinters:
+                        inside = not inside
+        p1x, p1y = p2x, p2y
+    return inside
+
+
+def draw_detections_fast(frame, zones, occupied_zones, objects):
+    """Dibuja detecciones de forma rápida"""
+    annotated = frame.copy()
+    
+    # Dibujar objetos
+    for obj in objects:
+        x1, y1, x2, y2 = [int(v) for v in obj['bbox']]
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 255), 2)
+        # Etiqueta
+        label = f"{obj['class']} {obj['confidence']:.2f}"
+        cv2.putText(annotated, label, (x1, y1-10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+    
+    # Dibujar zonas
+    for i, zone in enumerate(zones):
+        points = np.array(zone.get('points', []), np.int32).reshape((-1, 1, 2))
+        color = (0, 0, 255) if i in occupied_zones else (0, 255, 0)
+        
+        # Polígono con relleno transparente
+        overlay = annotated.copy()
+        cv2.fillPoly(overlay, [points], color)
+        cv2.addWeighted(overlay, 0.3, annotated, 0.7, 0, annotated)
+        
+        # Borde
+        cv2.polylines(annotated, [points], True, color, 3)
+        
+        # Número de zona
+        if len(points) > 0:
+            center = points.mean(axis=0)[0]
+            status = "OCUPADO" if i in occupied_zones else "LIBRE"
+            cv2.putText(annotated, f"#{i+1} {status}", 
+                       tuple(center.astype(int)), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    
+    return annotated
 
 
 # ============================================
-# ENDPOINT 2: Streaming de Video en Tiempo Real
+# ENDPOINT: WebSocket OPTIMIZADO para Frontend
 # ============================================
-@app.websocket("/ws/detect/stream")
-async def websocket_video_stream(websocket: WebSocket):
+@app.websocket("/ws/detect/stream/{estacionamiento_id}")
+async def websocket_video_stream_optimized(websocket: WebSocket, estacionamiento_id: int):
     """
-    WebSocket para análisis en tiempo real de frames de video/cámara
-    El cliente envía frames base64, el servidor responde con detecciones
+    WebSocket OPTIMIZADO para streaming del frontend
+    Procesa frames a la velocidad que los envía el frontend
     """
     await websocket.accept()
-    print("WebSocket conectado para streaming")
+    print(f"🔌 WebSocket conectado - Estacionamiento {estacionamiento_id}")
     
+    # Cargar modelo UNA sola vez
     model = YOLO(model_path)
-    parking_zones = load_parking_zones()
+    if torch.cuda.is_available():
+        model.to('cuda')
+        print("✅ Usando GPU")
+    else:
+        print("⚠️ Usando CPU")
+    
+    # Cargar zonas específicas del estacionamiento
+    parking_zones = load_parking_zones(estacionamiento_id)
+    print(f"📍 Zonas cargadas: {len(parking_zones)}")
+    
+    # Estadísticas
+    frame_count = 0
+    start_time = time.time()
+    last_fps_update = time.time()
+    fps = 0
     
     try:
         while True:
-            # Recibir frame del cliente (base64)
+            # Recibir frame del frontend
             data = await websocket.receive_text()
             message = json.loads(data)
             
             if message.get('type') == 'frame':
+                frame_start = time.time()
+                
                 # Decodificar imagen
                 img_data = message['data']
                 if ',' in img_data:
@@ -189,199 +184,217 @@ async def websocket_video_stream(websocket: WebSocket):
                     await websocket.send_json({"error": "Frame inválido"})
                     continue
                 
-                # Detectar
-                results = model(frame, **DETECTION_CONFIG)
+                # Redimensionar para velocidad (opcional)
+                h, w = frame.shape[:2]
+                if w > 800:  # Si es muy grande, reducir
+                    scale = 800 / w
+                    new_w, new_h = 800, int(h * scale)
+                    frame = cv2.resize(frame, (new_w, new_h))
                 
-                all_objects = []
-                if results[0].boxes is not None:
-                    for box in results[0].boxes:
-                        class_id = int(box.cls[0])
-                        confidence = float(box.conf[0])
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        bbox_area = (x2 - x1) * (y2 - y1)
-                        class_name = model.names[class_id]
-                        
-                        is_significant, _ = is_significant_object(confidence, bbox_area, (x1, y1, x2, y2))
-                        
-                        if is_significant:
-                            all_objects.append({
-                                'center': (float((x1+x2)/2), float((y1+y2)/2)),
-                                'bbox': (float(x1), float(y1), float(x2), float(y2)),
-                                'class': class_name,
-                                'confidence': float(confidence)
-                            })
-                
-                color_detections = detect_by_color_analysis(frame, parking_zones)
-                occupied_zones, zone_details = analyze_parking_zones_simple(
-                    all_objects, color_detections, parking_zones
+                # PROCESAR con el modelo (esto es lo que toma tiempo)
+                result = await asyncio.get_event_loop().run_in_executor(
+                    executor,
+                    process_single_frame_fast,
+                    frame, model, parking_zones
                 )
                 
-                # Anotar imagen
-                annotated = draw_simple_annotations(frame, parking_zones, occupied_zones, zone_details, all_objects)
-                _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                annotated_b64 = base64.b64encode(buffer).decode()
-                
-                # Enviar respuesta
-                await websocket.send_json({
-                    "type": "detection_result",
-                    "timestamp": datetime.now().isoformat(),
-                    "image": f"data:image/jpeg;base64,{annotated_b64}",
-                    "total": len(parking_zones),
-                    "occupied": len(occupied_zones),
-                    "available": len(parking_zones) - len(occupied_zones),
-                    "objects": len(all_objects),
-                    "zones": zone_details
-                })
+                if result:
+                    # Dibujar anotaciones
+                    annotated = draw_detections_fast(
+                        frame, 
+                        parking_zones, 
+                        set(range(result['occupied'])),  # Simplificado
+                        result['objects']
+                    )
+                    
+                    # Codificar resultado
+                    _, buffer = cv2.imencode('.jpg', annotated, 
+                                            [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    annotated_b64 = base64.b64encode(buffer).decode()
+                    
+                    # Calcular FPS
+                    frame_count += 1
+                    current_time = time.time()
+                    if current_time - last_fps_update >= 1.0:
+                        fps = frame_count / (current_time - last_fps_update)
+                        frame_count = 0
+                        last_fps_update = current_time
+                    
+                    processing_time = time.time() - frame_start
+                    
+                    # Enviar respuesta
+                    await websocket.send_json({
+                        "type": "detection_result",
+                        "timestamp": datetime.now().isoformat(),
+                        "image": f"data:image/jpeg;base64,{annotated_b64}",
+                        "total": result['total'],
+                        "occupied": result['occupied'],
+                        "available": result['available'],
+                        "objects": len(result['objects']),
+                        "fps": round(fps, 1),
+                        "processing_time_ms": round(processing_time * 1000, 1)
+                    })
+                    
+                    # Log cada 30 frames
+                    if frame_count % 30 == 0:
+                        print(f"📊 FPS: {fps:.1f} | Procesamiento: {processing_time*1000:.1f}ms")
                 
             elif message.get('type') == 'ping':
                 await websocket.send_json({"type": "pong"})
                 
     except WebSocketDisconnect:
-        print("WebSocket desconectado")
+        print(f"🔌 WebSocket desconectado - Estacionamiento {estacionamiento_id}")
     except Exception as e:
-        print(f"Error en WebSocket: {e}")
+        print(f"❌ Error WebSocket: {e}")
+        traceback.print_exc()
         await websocket.close()
 
 
 # ============================================
-# ENDPOINT 3: Análisis Automático Periódico
+# ENDPOINT: Análisis de Video Completo
 # ============================================
-# Almacén de tareas de monitoreo activas
-active_monitors = {}
-
-@app.post("/detect/auto/start")
-async def start_auto_detection(
-    estacionamiento_id: int = Body(...),
-    interval_seconds: int = Body(default=30),  # Intervalo entre análisis
-    source_type: str = Body(default="image"),  # "image", "rtsp", "http"
-    source_url: Optional[str] = Body(default=None)  # URL de cámara IP
+@app.post("/detect/video/")
+async def detect_video_batch(
+    file: UploadFile = File(...),
+    estacionamiento_id: Optional[int] = None,
+    frame_skip: int = 30,  # 1 de cada 30 frames
+    max_frames: int = 50,  # Máximo 50 frames
+    resize_width: int = 640  # Resolución moderada
 ):
     """
-    Inicia monitoreo automático de un estacionamiento
+    Analiza un video completo de forma optimizada
+    Útil para análisis histórico o reportes
     """
-    monitor_id = f"monitor_{estacionamiento_id}"
-    
-    if monitor_id in active_monitors:
-        return {"message": "Monitor ya activo", "monitor_id": monitor_id}
-    
-    active_monitors[monitor_id] = {
-        "estacionamiento_id": estacionamiento_id,
-        "interval": interval_seconds,
-        "source_type": source_type,
-        "source_url": source_url,
-        "active": True,
-        "last_result": None,
-        "started_at": datetime.now().isoformat()
-    }
-    
-    # Iniciar tarea en background
-    asyncio.create_task(auto_detection_task(monitor_id))
-    
-    return {
-        "success": True,
-        "message": "Monitoreo iniciado",
-        "monitor_id": monitor_id,
-        "interval": interval_seconds
-    }
-
-@app.post("/detect/auto/stop")
-async def stop_auto_detection(estacionamiento_id: int = Body(...)):
-    """Detiene el monitoreo automático"""
-    monitor_id = f"monitor_{estacionamiento_id}"
-    
-    if monitor_id in active_monitors:
-        active_monitors[monitor_id]["active"] = False
-        del active_monitors[monitor_id]
-        return {"success": True, "message": "Monitoreo detenido"}
-    
-    return {"success": False, "message": "Monitor no encontrado"}
-
-@app.get("/detect/auto/status/{estacionamiento_id}")
-async def get_auto_detection_status(estacionamiento_id: int):
-    """Obtiene el estado del monitoreo automático"""
-    monitor_id = f"monitor_{estacionamiento_id}"
-    
-    if monitor_id in active_monitors:
+    temp_path = None
+    try:
+        # Guardar video temporalmente
+        temp_path = f"temp_video_{int(time.time())}_{estacionamiento_id or 0}.mp4"
+        with open(temp_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # Abrir video
+        cap = cv2.VideoCapture(temp_path)
+        if not cap.isOpened():
+            return JSONResponse(status_code=400, 
+                              content={"error": "No se pudo abrir el video"})
+        
+        # Info del video
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        duration = total_frames / fps if fps > 0 else 0
+        
+        print(f"\n🎬 === PROCESANDO VIDEO ===")
+        print(f"📹 {width}x{height} @ {fps:.1f} fps")
+        print(f"⏱️  Duración: {duration:.1f}s ({total_frames} frames)")
+        print(f"🎯 Procesará ~{total_frames//frame_skip} frames")
+        
+        # Cargar modelo y zonas
+        model = YOLO(model_path)
+        if torch.cuda.is_available():
+            model.to('cuda')
+        
+        parking_zones = load_parking_zones(estacionamiento_id) if estacionamiento_id else load_parking_zones()
+        
+        # Calcular escala
+        scale = resize_width / width if width > resize_width else 1.0
+        new_height = int(height * scale)
+        
+        start_time = time.time()
+        
+        # Extraer y procesar frames
+        frame_results = []
+        frame_idx = 0
+        processed = 0
+        
+        print("📥 Extrayendo frames...")
+        
+        while cap.isOpened() and processed < max_frames:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Saltar frames
+            if frame_idx % frame_skip != 0:
+                frame_idx += 1
+                continue
+            
+            # Redimensionar
+            if scale < 1.0:
+                frame = cv2.resize(frame, (resize_width, new_height))
+            
+            # Procesar
+            result = process_single_frame_fast(frame, model, parking_zones)
+            
+            if result:
+                frame_results.append({
+                    'frame': frame_idx,
+                    'timestamp': frame_idx / fps if fps > 0 else 0,
+                    'occupied': result['occupied'],
+                    'available': result['available'],
+                    'objects_detected': len(result['objects'])
+                })
+                
+                processed += 1
+                
+                if processed % 10 == 0:
+                    elapsed = time.time() - start_time
+                    print(f"   ✓ {processed} frames ({processed/elapsed:.1f} fps)")
+            
+            frame_idx += 1
+        
+        cap.release()
+        processing_time = time.time() - start_time
+        
+        # Calcular estadísticas
+        if frame_results:
+            avg_occupied = sum(r['occupied'] for r in frame_results) / len(frame_results)
+            max_occupied = max(r['occupied'] for r in frame_results)
+            min_occupied = min(r['occupied'] for r in frame_results)
+        else:
+            avg_occupied = max_occupied = min_occupied = 0
+        
+        print(f"\n✅ === COMPLETADO ===")
+        print(f"⏱️  {processing_time:.2f}s")
+        print(f"⚡ {len(frame_results)/processing_time:.1f} fps")
+        print(f"📊 Ocupación: {avg_occupied:.1f}/{len(parking_zones)}")
+        
         return {
-            "active": True,
-            "monitor": active_monitors[monitor_id]
+            "success": True,
+            "video_info": {
+                "fps": fps,
+                "total_frames": total_frames,
+                "duration_seconds": duration,
+                "resolution": f"{width}x{height}",
+                "processing_resolution": f"{resize_width}x{new_height}"
+            },
+            "processing_info": {
+                "frames_processed": len(frame_results),
+                "frame_skip": frame_skip,
+                "processing_time_seconds": round(processing_time, 2),
+                "processing_fps": round(len(frame_results)/processing_time, 2)
+            },
+            "statistics": {
+                "total_zones": len(parking_zones),
+                "avg_occupied": round(avg_occupied, 2),
+                "max_occupied": max_occupied,
+                "min_occupied": min_occupied,
+                "avg_available": round(len(parking_zones) - avg_occupied, 2)
+            },
+            "frame_results": frame_results
         }
-    
-    return {"active": False}
-
-async def auto_detection_task(monitor_id: str):
-    """Tarea de detección automática en background"""
-    model = YOLO(model_path)
-    parking_zones = load_parking_zones()
-    
-    while monitor_id in active_monitors and active_monitors[monitor_id]["active"]:
-        monitor = active_monitors[monitor_id]
         
-        try:
-            frame = None
-            
-            # Obtener frame según tipo de fuente
-            if monitor["source_type"] == "image":
-                # Leer desde archivo de imagen
-                image_path = f"images/estacionamientos/{monitor['estacionamiento_id']}.jpg"
-                if os.path.exists(image_path):
-                    frame = cv2.imread(image_path)
-                    
-            elif monitor["source_type"] == "rtsp" and monitor["source_url"]:
-                # Leer desde cámara RTSP
-                cap = cv2.VideoCapture(monitor["source_url"])
-                ret, frame = cap.read()
-                cap.release()
-                
-            elif monitor["source_type"] == "http" and monitor["source_url"]:
-                # Leer desde URL HTTP (cámara IP)
-                import urllib.request
-                resp = urllib.request.urlopen(monitor["source_url"])
-                img_array = np.array(bytearray(resp.read()), dtype=np.uint8)
-                frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-            
-            if frame is not None:
-                # Realizar detección
-                results = model(frame, **DETECTION_CONFIG)
-                
-                all_objects = []
-                if results[0].boxes is not None:
-                    for box in results[0].boxes:
-                        class_id = int(box.cls[0])
-                        confidence = float(box.conf[0])
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        bbox_area = (x2 - x1) * (y2 - y1)
-                        class_name = model.names[class_id]
-                        
-                        is_significant, _ = is_significant_object(confidence, bbox_area, (x1, y1, x2, y2))
-                        if is_significant:
-                            all_objects.append({
-                                'center': (float((x1+x2)/2), float((y1+y2)/2)),
-                                'bbox': (float(x1), float(y1), float(x2), float(y2)),
-                                'class': class_name,
-                                'confidence': float(confidence)
-                            })
-                
-                color_detections = detect_by_color_analysis(frame, parking_zones)
-                occupied_zones, zone_details = analyze_parking_zones_simple(
-                    all_objects, color_detections, parking_zones
-                )
-                
-                # Actualizar resultado
-                active_monitors[monitor_id]["last_result"] = {
-                    "timestamp": datetime.now().isoformat(),
-                    "total": len(parking_zones),
-                    "occupied": len(occupied_zones),
-                    "available": len(parking_zones) - len(occupied_zones),
-                    "zones": zone_details
-                }
-                
-                print(f"[{monitor_id}] Detectado: {len(occupied_zones)}/{len(parking_zones)} ocupados")
-                
-        except Exception as e:
-            print(f"Error en auto-detección {monitor_id}: {e}")
-        
-        # Esperar intervalo
-        await asyncio.sleep(monitor["interval"])
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
     
-    print(f"Monitor {monitor_id} detenido")
+    finally:
+        # Limpiar archivo temporal
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass

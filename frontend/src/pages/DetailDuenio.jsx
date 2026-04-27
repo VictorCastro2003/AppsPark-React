@@ -31,6 +31,7 @@ const ParkingOwnerDetail = ({ onBack }) => {
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const intervalRef = useRef(null);
+  const isSendingRef = useRef(false);
   const frameCountRef = useRef(0);
   const lastTimeRef = useRef(Date.now());
 
@@ -60,6 +61,7 @@ const ParkingOwnerDetail = ({ onBack }) => {
     }
     loadData();
   }, [parkingData]);
+
 
   useEffect(() => {
     return () => stopVideoDetection();
@@ -116,6 +118,7 @@ const ParkingOwnerDetail = ({ onBack }) => {
     }
   };
 
+
   const calculateStatistics = (detections, activeReservations) => {
     const totalSpaces = parkingData.espacios_total || 0;
     let availableSpacesBackend = parkingData.espacios_disponibles || 0;
@@ -140,6 +143,7 @@ const ParkingOwnerDetail = ({ onBack }) => {
     wsRef.current.onopen = () => {
       console.log('✅ WebSocket conectado');
       setIsProcessingVideo(true);
+      wsRef.current.send(JSON.stringify({ type: 'config', jpeg_quality: 70, display_width: 960 }));
     };
     
     wsRef.current.onmessage = (event) => {
@@ -168,6 +172,7 @@ const ParkingOwnerDetail = ({ onBack }) => {
     if (!video || !canvas || !ws || ws.readyState !== WebSocket.OPEN) return;
     if (video.readyState < 3 || video.paused || video.ended) return;
     if (!video.videoWidth || !video.videoHeight) return;
+    if (isSendingRef.current) return;
     
     const ctx = canvas.getContext('2d');
     if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
@@ -177,11 +182,24 @@ const ParkingOwnerDetail = ({ onBack }) => {
     
     try {
       ctx.drawImage(video, 0, 0);
-      const frameData = canvas.toDataURL('image/jpeg', 0.7);
-      ws.send(JSON.stringify({ type: 'frame', data: frameData }));
+      isSendingRef.current = true;
+      canvas.toBlob(async (blob) => {
+        try {
+          if (blob && ws.readyState === WebSocket.OPEN) {
+            const arrayBuffer = await blob.arrayBuffer();
+            ws.send(arrayBuffer);
+          } else if (ws.readyState === WebSocket.OPEN) {
+            const frameData = canvas.toDataURL('image/jpeg', 0.7);
+            ws.send(JSON.stringify({ type: 'frame', data: frameData }));
+          }
+        } finally {
+          isSendingRef.current = false;
+        }
+      }, 'image/jpeg', 0.7);
       setVideoDebugInfo({ width: video.videoWidth, height: video.videoHeight, time: video.currentTime });
     } catch (error) {
       console.error('❌ Error capturando frame:', error);
+      isSendingRef.current = false;
     }
   }, []);
 
@@ -317,7 +335,7 @@ const ParkingOwnerDetail = ({ onBack }) => {
   const hourlyPrice = parkingData.precio || 15.50;
 
   return (
-    <div className="container-fluid p-4" style={{ backgroundColor: '#f8f9fa' }}>
+    <div className="container-fluid p-4 ap-page" style={{ backgroundColor: '#f5f7fb' }}>
       {/* VIDEO OCULTO - FUERA de cualquier subcomponente para evitar re-renders */}
       {videoUrl && (
         <>
@@ -514,6 +532,22 @@ const ParkingOwnerDetail = ({ onBack }) => {
           </div>
         </div>
       )}
+
+      <style>{`
+        .ap-page .card {
+          border-radius: 14px;
+          border: 1px solid #e9ecef;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+        }
+        .ap-page .card-header {
+          background: linear-gradient(135deg, #eef2ff, #ffffff);
+          border-bottom: 1px solid #e9ecef;
+        }
+        .ap-page .btn-primary {
+          background: linear-gradient(135deg, #4f46e5, #6366f1);
+          border: none;
+        }
+      `}</style>
     </div>
   );
 };

@@ -39,9 +39,9 @@ export default function Sidebar({ currentPage = "inicio" }) {
       },
       { 
         icon: "bi-clock-history", 
-        label: "Historial", 
-        key: "historial", 
-        route: isDuenio ? "/historial-duenio" : "/historial" 
+        label: "Notificaciones", 
+        key: "notificaciones", 
+        route: "/notificaciones" 
       }
     ];
   };

@@ -5,6 +5,8 @@ import Swal from 'sweetalert2';
 import Sidebar from '../components/Sidebar';
 import PublicidadBanner from '../components/PublicidadBanner';
 
+const API_URL = "http://localhost:8000";
+
 export default function DetalleEstacionamiento() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -17,7 +19,13 @@ export default function DetalleEstacionamiento() {
   const [isLoadingReservas, setIsLoadingReservas] = useState(false);
   const [imageError, setImageError] = useState(null);
   const [showFullImage, setShowFullImage] = useState(false);
-  const [isCreatingManualReserva, setIsCreatingManualReserva] = useState(false);
+  const [zonas, setZonas] = useState([]);
+  const [fechaSeleccionada, setFechaSeleccionada] = useState(() => new Date().toISOString().split('T')[0]);
+  const [horaInicioSel, setHoraInicioSel] = useState("");
+  const [horaFinSel, setHoraFinSel] = useState("");
+  const [reservasFecha, setReservasFecha] = useState([]);
+  const [isLoadingReservasFecha, setIsLoadingReservasFecha] = useState(false);
+  const [selectedCajonId, setSelectedCajonId] = useState(null);
   
   const [user] = useState({ username: "Usuario Demo" });
   
@@ -53,6 +61,7 @@ export default function DetalleEstacionamiento() {
         const data = await response.json();
         if (data.image_annotated) setImagenConDetecciones(data.image_annotated);
         if (data.available !== undefined) setEspaciosDetectadosYOLO(data.available);
+        if (data.zones && Array.isArray(data.zones)) setZonas(data.zones);
       } else {
         setImageError(`Error del servidor: ${response.status}`);
       }
@@ -82,104 +91,63 @@ export default function DetalleEstacionamiento() {
     }
   };
 
-  // NUEVA FUNCIÓN: Reserva manual para autos sin app
-  const handleReservaManual = async () => {
-    const { value: formValues } = await Swal.fire({
-      title: '🚗 Reserva Manual',
-      html: `
-        <p class="text-muted mb-3">Registrar auto sin aplicación</p>
-        <div class="mb-3">
-          <label class="form-label">Placas del vehículo</label>
-          <input id="swal-placas" class="swal2-input" placeholder="ABC-123-XY" style="width:80%">
-        </div>
-        <div class="mb-3">
-          <label class="form-label">Descripción del vehículo</label>
-          <input id="swal-descripcion" class="swal2-input" placeholder="Sedan rojo, Honda Civic" style="width:80%">
-        </div>
-        <div class="mb-3">
-          <label class="form-label">Duración (horas)</label>
-          <select id="swal-duracion" class="swal2-select" style="width:80%">
-            <option value="1">1 hora</option>
-            <option value="2">2 horas</option>
-            <option value="3">3 horas</option>
-            <option value="4">4 horas</option>
-            <option value="8">8 horas (día parcial)</option>
-            <option value="24">24 horas (día completo)</option>
-          </select>
-        </div>
-      `,
-      focusConfirm: false,
-      showCancelButton: true,
-      confirmButtonText: '✅ Crear Reserva',
-      cancelButtonText: '❌ Cancelar',
-      confirmButtonColor: '#28a745',
-      cancelButtonColor: '#dc3545',
-      preConfirm: () => {
-        const placas = document.getElementById('swal-placas').value.trim();
-        const descripcion = document.getElementById('swal-descripcion').value.trim();
-        const duracion = document.getElementById('swal-duracion').value;
-        if (!placas) {
-          Swal.showValidationMessage('Las placas son obligatorias');
-          return false;
-        }
-        if (placas.length < 5) {
-          Swal.showValidationMessage('Ingresa placas válidas');
-          return false;
-        }
-        return { placas, descripcion, duracion };
+  const cargarReservasPorFecha = async (estacionamientoId, fecha, horaInicio, horaFin) => {
+    if (!fecha) {
+      setReservasFecha([]);
+      return;
+    }
+    setIsLoadingReservasFecha(true);
+    try {
+      const params = new URLSearchParams({ fecha });
+      if (horaInicio && horaFin) {
+        params.append("hora_inicio", horaInicio);
+        params.append("hora_fin", horaFin);
       }
-    });
-
-    if (formValues) {
-      setIsCreatingManualReserva(true);
-      try {
-        const response = await fetch('http://localhost:8000/reservas/manual/', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            estacionamiento_id: estacionamiento.id,
-            placas: formValues.placas,
-            descripcion_vehiculo: formValues.descripcion,
-            duracion_horas: parseInt(formValues.duracion)
-          })
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const costoTotal = (estacionamiento.precio * formValues.duracion).toFixed(2);
-          await Swal.fire({
-            icon: 'success',
-            title: '¡Reserva Creada!',
-            html: `
-              <p><strong>Placas:</strong> ${formValues.placas}</p>
-              <p><strong>Duración:</strong> ${formValues.duracion} hora(s)</p>
-              <p><strong>Costo Total:</strong> $${costoTotal} MXN</p>
-              ${data.codigo_reserva ? `<p><strong>Código:</strong> ${data.codigo_reserva}</p>` : ''}
-            `,
-            confirmButtonColor: '#28a745'
-          });
-          cargarReservasActivas(estacionamiento.id);
-        } else {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.detail || 'Error al crear reserva');
-        }
-      } catch (error) {
-        await Swal.fire({
-          icon: 'error',
-          title: 'Error',
-          text: error.message || 'No se pudo crear la reserva',
-          confirmButtonColor: '#dc3545'
-        });
-      } finally {
-        setIsCreatingManualReserva(false);
+      const response = await fetch(
+        `${API_URL}/reservas/estacionamiento/${estacionamientoId}?${params.toString()}`,
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setReservasFecha(Array.isArray(data) ? data : []);
+      } else {
+        setReservasFecha([]);
       }
+    } catch (error) {
+      setReservasFecha([]);
+    } finally {
+      setIsLoadingReservasFecha(false);
     }
   };
+
+  useEffect(() => {
+    if (estacionamiento?.id && fechaSeleccionada) {
+      cargarReservasPorFecha(estacionamiento.id, fechaSeleccionada, horaInicioSel, horaFinSel);
+    }
+  }, [estacionamiento, fechaSeleccionada, horaInicioSel, horaFinSel]);
+
+  useEffect(() => {
+    if (!selectedCajonId) return;
+    const reservedIds = new Set(
+      (reservasFecha || [])
+        .map((r) => {
+          const key = r.cajon_numero ?? r.cajon_id;
+          const num = parseInt(key, 10);
+          return Number.isFinite(num) ? num : null;
+        })
+        .filter((v) => v !== null)
+    );
+    const selectedZone = (zonas || []).find(z => z.id === selectedCajonId);
+    if (selectedZone?.occupied || reservedIds.has(selectedCajonId)) {
+      setSelectedCajonId(null);
+    }
+  }, [zonas, reservasFecha, selectedCajonId]);
 
   const handleRefresh = () => {
     if (estacionamiento) {
       cargarImagenYDeteccionYOLO(estacionamiento.id);
       cargarReservasActivas(estacionamiento.id);
+      cargarReservasPorFecha(estacionamiento.id, fechaSeleccionada, horaInicioSel, horaFinSel);
       Swal.fire({
         icon: 'info', title: 'Actualizando...', timer: 1500,
         showConfirmButton: false, timerProgressBar: true
@@ -188,7 +156,33 @@ export default function DetalleEstacionamiento() {
   };
 
   const handleReserva = () => {
-    navigate('/reservas_usuario', { state: { estacionamiento } });
+    if (!selectedCajonId || !fechaSeleccionada || !horaInicioSel || !horaFinSel) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Selecciona un espacio',
+        text: 'Elige fecha, horario y un espacio disponible antes de continuar.',
+        confirmButtonColor: '#0d6efd'
+      });
+      return;
+    }
+    if (new Date(`${fechaSeleccionada}T${horaInicioSel}`) >= new Date(`${fechaSeleccionada}T${horaFinSel}`)) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Horario inválido',
+        text: 'La hora de fin debe ser posterior a la hora de inicio.',
+        confirmButtonColor: '#0d6efd'
+      });
+      return;
+    }
+    navigate('/reservas_usuario', { 
+      state: { 
+        estacionamiento,
+        selectedCajonId,
+        fechaReserva: fechaSeleccionada,
+        horaInicio: horaInicioSel,
+        horaFin: horaFinSel
+      } 
+    });
   };
 
   const handleVerMapa = () => {
@@ -232,12 +226,39 @@ export default function DetalleEstacionamiento() {
 
   const espacios = calcularEspaciosDisponibles();
   const disponible = espacios.disponibles > 0;
+  const horarioValido = fechaSeleccionada && horaInicioSel && horaFinSel &&
+    new Date(`${fechaSeleccionada}T${horaInicioSel}`) < new Date(`${fechaSeleccionada}T${horaFinSel}`);
+  const puedeReservar = disponible && selectedCajonId && horarioValido;
+  const getCajonKey = (r) => {
+    const key = r.cajon_numero ?? r.cajon_id;
+    const num = parseInt(key, 10);
+    return Number.isFinite(num) ? num : null;
+  };
+  const reservedIds = new Set(
+    (reservasFecha || [])
+      .map(getCajonKey)
+      .filter((v) => v !== null)
+  );
+  const reservasByCajon = new Map(
+    (reservasFecha || [])
+      .map((r) => [getCajonKey(r), r])
+      .filter(([k]) => k !== null)
+  );
+  const formatTime = (t) => {
+    if (!t) return "";
+    return typeof t === "string" ? t.slice(0, 5) : String(t).slice(0, 5);
+  };
+  const getZoneStatus = (zone) => {
+    if (zone.occupied) return "occupied";
+    if (reservedIds.has(zone.id)) return "reserved";
+    return "free";
+  };
 
   return (
     <div className="d-flex min-vh-100">
       <Sidebar user={user} onLogout={handleLogout} currentPage="buscar" />
       
-      <div className="flex-grow-1 bg-light d-flex flex-column">
+      <div className="flex-grow-1 d-flex flex-column ap-page" style={{ backgroundColor: '#f5f7fb' }}>
         {/* Header */}
         <div className="bg-primary text-white p-4">
           <div className="container-fluid">
@@ -394,46 +415,117 @@ export default function DetalleEstacionamiento() {
                 </div>
               </div>
 
+              {/* Selector de espacios */}
+              <div className="row">
+                <div className="col-12 mb-4">
+                  <div className="card">
+                    <div className="card-header d-flex justify-content-between align-items-center">
+                      <h5 className="card-title mb-0">Selecciona un espacio</h5>
+                      {isLoadingReservasFecha && <div className="spinner-border spinner-border-sm" role="status"></div>}
+                    </div>
+                    <div className="card-body">
+                      <div className="row g-3 mb-3">
+                        <div className="col-md-4">
+                          <label className="form-label">Fecha</label>
+                          <input
+                            type="date"
+                            className="form-control"
+                            value={fechaSeleccionada}
+                            onChange={(e) => setFechaSeleccionada(e.target.value)}
+                            min={new Date().toISOString().split('T')[0]}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Hora inicio</label>
+                          <input
+                            type="time"
+                            className="form-control"
+                            value={horaInicioSel}
+                            onChange={(e) => setHoraInicioSel(e.target.value)}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Hora fin</label>
+                          <input
+                            type="time"
+                            className="form-control"
+                            value={horaFinSel}
+                            onChange={(e) => setHoraFinSel(e.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      {zonas && zonas.length > 0 ? (
+                        <>
+                          <div className="parking-grid">
+                            {zonas.map((zone) => {
+                              const status = getZoneStatus(zone);
+                              const isSelected = selectedCajonId === zone.id;
+                              const isDisabled = status !== "free";
+                              const reservaInfo = reservasByCajon.get(zone.id);
+                              const tooltip =
+                                status === "reserved"
+                                  ? `Reservado: ${reservaInfo?.usuario_nombre || `Usuario ${reservaInfo?.usuario_id || ""}`}. ${formatTime(reservaInfo?.hora_inicio)}-${formatTime(reservaInfo?.hora_fin)}`
+                                  : status === "occupied"
+                                  ? "Ocupado fisico"
+                                  : "Libre";
+                              return (
+                                <button
+                                  key={zone.id}
+                                  type="button"
+                                  className={`parking-slot ${status} ${isSelected ? "selected" : ""}`}
+                                  aria-disabled={isDisabled}
+                                  onClick={() => {
+                                    if (!isDisabled) setSelectedCajonId(zone.id);
+                                  }}
+                                  data-tooltip={`Espacio ${zone.id} - ${tooltip}`}
+                                >
+                                  {zone.id}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="d-flex flex-wrap gap-3 mt-3 small text-muted">
+                            <span className="d-flex align-items-center gap-2">
+                              <span className="legend-box free"></span>Libre
+                            </span>
+                            <span className="d-flex align-items-center gap-2">
+                              <span className="legend-box reserved"></span>Reservado (solo en esta fecha)
+                            </span>
+                            <span className="d-flex align-items-center gap-2">
+                              <span className="legend-box occupied"></span>Ocupado
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="alert alert-warning mb-0">
+                          No hay zonas configuradas para este estacionamiento.
+                        </div>
+                      )}
+
+                      {selectedCajonId && (
+                        <div className="alert alert-info mt-3 mb-0">
+                          Espacio seleccionado: <strong>#{selectedCajonId}</strong>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Botones de acción */}
               <div className="row">
                 <div className="col-12">
                   <div className="d-flex gap-3 justify-content-center flex-wrap">
-                    <button className={`btn ${disponible ? 'btn-success' : 'btn-secondary'} btn-lg px-4`}
-                      onClick={handleReserva} disabled={!disponible}>
-                      📅 {disponible ? 'Hacer Reserva' : 'No Disponible'}
+                    <button className={`btn ${puedeReservar ? 'btn-success' : 'btn-secondary'} btn-lg px-4`}
+                      onClick={handleReserva} disabled={!puedeReservar}>
+                      📅 {puedeReservar ? 'Hacer Reserva' : 'Completa la seleccion'}
                     </button>
-                    
-                    {/* BOTÓN RESERVA MANUAL - Solo visible si hay espacio */}
-                    {disponible && (
-                      <button 
-                        className="btn btn-warning btn-lg px-4"
-                        onClick={handleReservaManual}
-                        disabled={isCreatingManualReserva}
-                        title="Registrar auto que no tiene la aplicación"
-                      >
-                        {isCreatingManualReserva ? (
-                          <>
-                            <span className="spinner-border spinner-border-sm me-2"></span>
-                            Procesando...
-                          </>
-                        ) : (
-                          <>🚗 Reserva Manual</>
-                        )}
-                      </button>
-                    )}
                     
                     <button className="btn btn-outline-primary btn-lg px-4" onClick={handleVerMapa}>
                       🗺️ Google Maps
                     </button>
                   </div>
-
-                  {disponible && (
-                    <div className="text-center mt-3">
-                      <small className="text-muted">
-                        💡 Usa "Reserva Manual" para registrar autos que no tienen la aplicación
-                      </small>
-                    </div>
-                  )}
 
                   {!disponible && (
                     <div className="text-center mt-3">
@@ -473,6 +565,105 @@ export default function DetalleEstacionamiento() {
           </div>
         </div>
       )}
+
+      <style>{`
+        .parking-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+          gap: 10px;
+          background: linear-gradient(180deg, rgba(248,249,255,0.9), rgba(255,255,255,0.95));
+          border-radius: 12px;
+          padding: 12px;
+          border: 1px solid #e5e7ff;
+        }
+        .parking-slot {
+          border: 2px solid transparent;
+          border-radius: 10px;
+          height: 56px;
+          font-weight: 600;
+          background: #f1f3f5;
+          color: #343a40;
+          transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
+          position: relative;
+        }
+        .parking-slot.free {
+          background: #e9f7ef;
+          border-color: #28a745;
+          color: #1e7e34;
+        }
+        .parking-slot.free:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 18px rgba(40, 167, 69, 0.2);
+        }
+        .parking-slot.reserved {
+          background: #fff3e0;
+          border-color: #fd7e14;
+          color: #b45309;
+          filter: saturate(0.9);
+        }
+        .parking-slot.occupied {
+          background: #fdecea;
+          border-color: #dc3545;
+          color: #b02a37;
+          cursor: not-allowed;
+          filter: grayscale(0.1);
+        }
+        .parking-slot[aria-disabled="true"] {
+          cursor: not-allowed;
+        }
+        .parking-slot[data-tooltip]:hover::after {
+          content: attr(data-tooltip);
+          position: absolute;
+          left: 50%;
+          bottom: calc(100% + 8px);
+          transform: translateX(-50%);
+          background: rgba(17, 24, 39, 0.95);
+          color: #fff;
+          padding: 6px 10px;
+          border-radius: 8px;
+          font-size: 12px;
+          white-space: nowrap;
+          z-index: 10;
+          box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+        .parking-slot[data-tooltip]:hover::before {
+          content: "";
+          position: absolute;
+          left: 50%;
+          bottom: calc(100% + 2px);
+          transform: translateX(-50%);
+          border: 6px solid transparent;
+          border-top-color: rgba(17, 24, 39, 0.95);
+          z-index: 9;
+        }
+        .parking-slot.selected {
+          box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.35);
+          transform: translateY(-1px);
+        }
+        .legend-box {
+          width: 14px;
+          height: 14px;
+          border-radius: 4px;
+          display: inline-block;
+          border: 2px solid transparent;
+        }
+        .legend-box.free { background: #e9f7ef; border-color: #28a745; }
+        .legend-box.reserved { background: #fff3e0; border-color: #fd7e14; }
+        .legend-box.occupied { background: #fdecea; border-color: #dc3545; }
+        .ap-page .card {
+          border-radius: 14px;
+          border: 1px solid #e9ecef;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+        }
+        .ap-page .card-header {
+          background: linear-gradient(135deg, #eef2ff, #ffffff);
+          border-bottom: 1px solid #e9ecef;
+        }
+        .ap-page .btn-primary {
+          background: linear-gradient(135deg, #4f46e5, #6366f1);
+          border: none;
+        }
+      `}</style>
     </div>
   );
 }

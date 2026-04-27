@@ -9,6 +9,7 @@ import DetailUsuario from "./pages/DetailUsuario";
 import ReservaDuenio from "./pages/ReservaDuenio";
 import ReservaUsuario from "./pages/ReservaUsuario";
 import MisReservas from "./pages/MisReservas";
+import Notificaciones from "./pages/Notificaciones";
 import Register from "./pages/Register"
 import Profile from "./pages/profile"
 
@@ -32,6 +33,7 @@ function App() {
           <Route path="/reservas_duenio" element={<ReservaDuenio />} />
           <Route path="/reservas_usuario" element={<ReservaUsuario />} />
           <Route path="/mis_reservas" element={<MisReservas />} />
+          <Route path="/notificaciones" element={<Notificaciones />} />
           <Route path="/profile" element={<Profile />} />
         </Routes>
       </Router>
