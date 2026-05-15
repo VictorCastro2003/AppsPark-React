@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import Sidebar from "../components/Sidebar";
 
 export default function ReservasDuenio({ onReservaProcessed }) {
   const { user, token, getAuthHeaders } = useAuth();
@@ -172,7 +173,10 @@ export default function ReservasDuenio({ onReservaProcessed }) {
   );
 
   return (
-    <div className="container my-4">
+    <div className="d-flex" style={{ minHeight: "100vh" }}>
+      <Sidebar currentPage="reservas" />
+      <div className="flex-grow-1 p-4" style={{ backgroundColor: "#f8f9fa" }}>
+      <div className="container my-2">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
           <h1 className="h4 fw-bold mb-1">Reservas Pendientes</h1>
@@ -359,6 +363,8 @@ export default function ReservasDuenio({ onReservaProcessed }) {
           .owner-meta { grid-template-columns: 1fr; }
         }
       `}</style>
+      </div>
+      </div>
     </div>
   );
 }

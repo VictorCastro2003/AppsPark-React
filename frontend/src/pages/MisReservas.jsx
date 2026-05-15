@@ -4,11 +4,14 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import QRCode from "qrcode";
 import { useNavigate } from "react-router-dom";
+import Sidebar from "../components/Sidebar";
+import { useAuth } from "../contexts/AuthContext";
 
 const API_URL = "http://localhost:8000/reservas"; // Ajusta tu URL base
-const usuarioId = 1; // 🔹 Cambia al usuario logueado
 
 export default function MisReservas() {
+  const { user } = useAuth();
+  const usuarioId = user?.id;
   const [reservas, setReservas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -21,11 +24,13 @@ export default function MisReservas() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (!usuarioId) return;
     fetchReservas();
     fetchNotificaciones();
-  }, []);
+  }, [usuarioId]);
 
   const fetchReservas = async () => {
+    if (!usuarioId) return;
     try {
       setLoading(true);
       const res = await axios.get(`${API_URL}/usuario/${usuarioId}`);
@@ -75,6 +80,7 @@ export default function MisReservas() {
   };
 
   const fetchNotificaciones = async () => {
+    if (!usuarioId) return;
     try {
       const res = await axios.get(`http://localhost:8000/notificaciones/usuario/${usuarioId}`);
       setNotificaciones(res.data || []);
@@ -133,11 +139,15 @@ export default function MisReservas() {
     { total: 0, pendientes: 0, aceptadas: 0, rechazadas: 0 }
   );
 
+  if (!usuarioId) return <div className="text-center mt-5">Inicia sesión para ver tus reservas.</div>;
   if (loading) return <div className="text-center mt-5">Cargando...</div>;
   if (error) return <div className="alert alert-danger">{error}</div>;
 
   return (
-    <div className="container mt-4">
+    <div className="d-flex" style={{ minHeight: "100vh" }}>
+      <Sidebar currentPage="reservas" />
+      <div className="flex-grow-1 p-4" style={{ backgroundColor: "#f8f9fa" }}>
+      <div className="container mt-2">
       {/* Encabezado con botón de volver */}
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
@@ -473,6 +483,8 @@ export default function MisReservas() {
           border: 1px solid #e5e7ff;
         }
       `}</style>
+      </div>
+      </div>
     </div>
   );
 }

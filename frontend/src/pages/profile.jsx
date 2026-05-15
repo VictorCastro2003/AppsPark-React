@@ -1,6 +1,7 @@
 /* eslint-disable no-unused-vars */
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import Sidebar from '../components/Sidebar';
 
 const Profile = () => {
   const { user, logout, updateUser, authenticatedFetch } = useAuth();
@@ -224,10 +225,13 @@ const Profile = () => {
   }
 
   return (
-    <div className="container mt-5">
-      <div className="row justify-content-center">
-        <div className="col-md-8 col-lg-6">
-          <div className="card shadow">
+    <div className="d-flex" style={{ minHeight: "100vh" }}>
+      <Sidebar currentPage="perfil" />
+      <div className="flex-grow-1 p-4" style={{ backgroundColor: "#f8f9fa" }}>
+        <div className="container mt-2">
+          <div className="row justify-content-center">
+            <div className="col-md-8 col-lg-6">
+              <div className="card shadow">
             <div className="card-body p-4">
               
               {/* Header con Avatar */}
@@ -470,6 +474,8 @@ const Profile = () => {
                  
                 </div>
               </form>
+            </div>
+              </div>
             </div>
           </div>
         </div>
