@@ -20,6 +20,10 @@ class Reserva(Base):
     hora_salida = Column(DateTime, nullable=True)
     minutos_exceso = Column(Integer, nullable=True)
     costo_extra = Column(Float, nullable=True)
+    # Campos de pago
+    pago_estado = Column(String(30), nullable=True, default=None)  # None, 'pendiente', 'completado', 'fallido'
+    pago_id = Column(String(100), nullable=True)  # PayPal order/capture ID
+    idempotency_key = Column(String(64), nullable=True, unique=True, index=True)  # Para idempotencia
 
     usuario = relationship("Usuario", back_populates="reservas")
     cajon = relationship("Cajon", back_populates="reservas")

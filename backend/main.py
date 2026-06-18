@@ -34,10 +34,20 @@ class CORSStaticFilesMiddleware(BaseHTTPMiddleware):
         return response
 
 
+from contextlib import asynccontextmanager
+from cron_jobs import start_scheduler
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Iniciar los cron jobs en background
+    start_scheduler()
+    yield
+
 app = FastAPI(
     title="Sistema de Detección de Estacionamiento",
     description="API para detección de espacios de estacionamiento usando YOLO",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS config - DEBE IR PRIMERO
@@ -89,6 +99,13 @@ try:
     print("✓ Router notificaciones importado exitosamente")
 except ImportError as e:
     print(f"✗ Error importando notificacion_router: {e}")
+
+try:
+    from routers.pago_router import router as pago_router
+    app.include_router(pago_router)
+    print("✓ Router pagos (PayPal) importado exitosamente")
+except ImportError as e:
+    print(f"✗ Error importando pago_router: {e}")
 
 print("=== FIN IMPORTACIÓN ROUTERS ===\n")
 

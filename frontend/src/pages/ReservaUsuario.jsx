@@ -3,6 +3,8 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import PublicidadBanner from "../components/PublicidadBanner";
+import PaymentModal from "../components/PaymentModal";
+
 
 const API_URL = "http://localhost:8000";
 
@@ -21,12 +23,17 @@ export default function ReservaUsuario() {
   const [selectedCajonId, setSelectedCajonId] = useState(location.state?.selectedCajonId ?? null);
   const [mensaje, setMensaje] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false); // Anti doble-click
   const [estacionamientoActual, setEstacionamientoActual] = useState(estacionamiento);
   const [user] = useState({ username: "Usuario" }); // Simular usuario logueado
   const [zonas, setZonas] = useState([]);
   const [reservasFecha, setReservasFecha] = useState([]);
   const [isLoadingReservasFecha, setIsLoadingReservasFecha] = useState(false);
   const [isLoadingZonas, setIsLoadingZonas] = useState(false);
+  // Estado del modal de pago
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [reservaCreada, setReservaCreada] = useState(null); // { id, monto }
+
 
   // Validación mejorada
   const puedeReservar = 
@@ -35,9 +42,11 @@ export default function ReservaUsuario() {
     horaInicio && 
     horaFin &&
     !loading &&
+    !submitting &&
     new Date(`${fechaReserva}T${horaInicio}`) < new Date(`${fechaReserva}T${horaFin}`) &&
     estacionamientoActual?.espacios_disponibles > 0 &&
     selectedCajonId;
+
 
   const getCajonKey = (r) => {
     const key = r.cajon_numero ?? r.cajon_id;
@@ -167,6 +176,9 @@ export default function ReservaUsuario() {
 
   const confirmarReserva = async (e) => {
     e.preventDefault();
+    // Prevenir doble submit
+    if (submitting || loading) return;
+    setSubmitting(true);
     setLoading(true);
     setMensaje(null);
 
@@ -194,22 +206,16 @@ export default function ReservaUsuario() {
       if (response.ok) {
         setMensaje({ 
           tipo: "success", 
-          texto: `✅ ${data.message || 'Reserva creada exitosamente'}.`
+          texto: `✅ Reserva #${data.reserva_id} creada. Completa el pago para confirmarla.`
         });
-        
-        // Limpiar formulario
-        setPlacaVehiculo("");
-        setFechaReserva("");
-        setHoraInicio("");
-        setHoraFin("");
-        
-        // Recargar datos del estacionamiento
-        setTimeout(() => {
-          cargarEstacionamientoActual();
-        }, 1000);
-        
-        // Navegar después de 3 segundos
-        setTimeout(() => navigate("/Home_Usuario"), 3000);
+        // Calcular monto para mostrar en el modal de pago
+        const inicio = new Date(`2000-01-01T${horaInicio}`);
+        const fin = new Date(`2000-01-01T${horaFin}`);
+        const horas = Math.max(0, (fin - inicio) / (1000 * 60 * 60));
+        const montoCalculado = (horas * (estacionamientoActual?.precio || 0)).toFixed(2);
+        // Guardar datos de la reserva creada y abrir modal de pago
+        setReservaCreada({ id: data.reserva_id, monto: montoCalculado });
+        setShowPaymentModal(true);
       } else {
         throw new Error(data.detail || 'Error al crear la reserva');
       }
@@ -231,8 +237,10 @@ export default function ReservaUsuario() {
       setMensaje({ tipo: "danger", texto: mensajeError });
     } finally {
       setLoading(false);
+      setSubmitting(false);
     }
   };
+
 
   const calcularDuracion = () => {
     if (horaInicio && horaFin) {
@@ -545,15 +553,17 @@ export default function ReservaUsuario() {
                       <button 
                         className="btn btn-primary btn-lg"
                         type="submit" 
-                        disabled={!puedeReservar}
+                        id="btn-confirmar-reserva"
+                        disabled={!puedeReservar || submitting}
+                        aria-busy={submitting || loading}
                       >
-                        {loading ? (
+                        {loading || submitting ? (
                           <>
-                            <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
                             Procesando...
                           </>
                         ) : (
-                          "🎯 Confirmar Reserva"
+                          "💳 Reservar y Pagar"
                         )}
                       </button>
                       
@@ -580,6 +590,38 @@ export default function ReservaUsuario() {
         </div>
          <PublicidadBanner />
       </div>
+
+      {/* Modal de Pago PayPal */}
+      {showPaymentModal && reservaCreada && (
+        <PaymentModal
+          reservaId={reservaCreada.id}
+          monto={reservaCreada.monto}
+          moneda="MXN"
+          onSuccess={() => {
+            setShowPaymentModal(false);
+            setMensaje({
+              tipo: "success",
+              texto: `✅ ¡Reserva #${reservaCreada.id} pagada exitosamente! Redirigiendo...`
+            });
+            // Limpiar formulario
+            setPlacaVehiculo("");
+            setFechaReserva("");
+            setHoraInicio("");
+            setHoraFin("");
+            setSelectedCajonId(null);
+            cargarEstacionamientoActual();
+            setTimeout(() => navigate("/mis-reservas"), 2500);
+          }}
+          onClose={() => {
+            setShowPaymentModal(false);
+            setMensaje({
+              tipo: "warning",
+              texto: `⚠️ Reserva #${reservaCreada.id} creada pero pendiente de pago. Ve a "Mis Reservas" para completar el pago.`
+            });
+          }}
+        />
+      )}
+
 
       <style>{`
         .parking-grid {

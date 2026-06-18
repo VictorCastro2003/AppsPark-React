@@ -205,7 +205,7 @@ export default function DetalleEstacionamiento() {
     if (!estacionamiento) return { disponibles: 0, total: 0, reservadas: 0, ocupados: 0 };
     const total = estacionamiento.espacios_total || 0;
     let libres = espaciosDetectadosYOLO ?? estacionamiento.espacios_disponibles ?? 0;
-    const reservadas = reservasActivas || 0;
+    const reservadas = reservasFecha.length || 0;
     const ocupados = Math.max(0, total - libres);
     const disponibles = Math.max(0, libres - reservadas);
     return { total, libres, reservadas, ocupados, disponibles, hayDeteccionYOLO: espaciosDetectadosYOLO !== null };

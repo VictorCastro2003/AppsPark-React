@@ -3,8 +3,8 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 import os
 
-# Carga las variables del archivo .env
-load_dotenv()
+# Carga las variables del archivo .env con override para que uvicorn --reload recoja los cambios
+load_dotenv(override=True)
 
 # URL de conexión a MySQL
 DATABASE_URL = os.getenv("DATABASE_URL")

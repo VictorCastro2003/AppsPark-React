@@ -6,6 +6,7 @@ import QRCode from "qrcode";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import { useAuth } from "../contexts/AuthContext";
+import PaymentModal from "../components/PaymentModal";
 
 const API_URL = "http://localhost:8000/reservas"; // Ajusta tu URL base
 
@@ -22,6 +23,9 @@ export default function MisReservas() {
   const [notificaciones, setNotificaciones] = useState([]);
 
   const navigate = useNavigate();
+
+  // Estado del modal de pago
+  const [pagoModal, setPagoModal] = useState(null); // { reservaId, monto }
 
   useEffect(() => {
     if (!usuarioId) return;
@@ -147,262 +151,302 @@ export default function MisReservas() {
     <div className="d-flex" style={{ minHeight: "100vh" }}>
       <Sidebar currentPage="reservas" />
       <div className="flex-grow-1 p-4" style={{ backgroundColor: "#f8f9fa" }}>
-      <div className="container mt-2">
-      {/* Encabezado con botón de volver */}
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <div>
-          <h3 className="fw-bold text-dark mb-1">Mis Reservas</h3>
-          <small className="text-muted">Historial y estado de tus reservas</small>
-        </div>
-        <button
-          className="btn btn-outline-secondary"
-          onClick={() => navigate(-1)}
-        >
-          <i className="bi bi-arrow-left me-2"></i> Volver
-        </button>
-      </div>
+        <div className="container mt-2">
+          {/* Encabezado con botón de volver */}
+          <div className="d-flex justify-content-between align-items-center mb-4">
+            <div>
+              <h3 className="fw-bold text-dark mb-1">Mis Reservas</h3>
+              <small className="text-muted">Historial y estado de tus reservas</small>
+            </div>
+            <button
+              className="btn btn-outline-secondary"
+              onClick={() => navigate(-1)}
+            >
+              <i className="bi bi-arrow-left me-2"></i> Volver
+            </button>
+          </div>
 
-      <div className="row g-3 mb-4">
-        <div className="col-6 col-md-3">
-          <div className="stat-card">
-            <div className="stat-label">Total</div>
-            <div className="stat-value">{stats.total}</div>
+          <div className="row g-3 mb-4">
+            <div className="col-6 col-md-3">
+              <div className="stat-card">
+                <div className="stat-label">Total</div>
+                <div className="stat-value">{stats.total}</div>
+              </div>
+            </div>
+            <div className="col-6 col-md-3">
+              <div className="stat-card pending">
+                <div className="stat-label">Pendientes</div>
+                <div className="stat-value">{stats.pendientes}</div>
+              </div>
+            </div>
+            <div className="col-6 col-md-3">
+              <div className="stat-card success">
+                <div className="stat-label">Aceptadas</div>
+                <div className="stat-value">{stats.aceptadas}</div>
+              </div>
+            </div>
+            <div className="col-6 col-md-3">
+              <div className="stat-card danger">
+                <div className="stat-label">Rechazadas</div>
+                <div className="stat-value">{stats.rechazadas}</div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="col-6 col-md-3">
-          <div className="stat-card pending">
-            <div className="stat-label">Pendientes</div>
-            <div className="stat-value">{stats.pendientes}</div>
-          </div>
-        </div>
-        <div className="col-6 col-md-3">
-          <div className="stat-card success">
-            <div className="stat-label">Aceptadas</div>
-            <div className="stat-value">{stats.aceptadas}</div>
-          </div>
-        </div>
-        <div className="col-6 col-md-3">
-          <div className="stat-card danger">
-            <div className="stat-label">Rechazadas</div>
-            <div className="stat-value">{stats.rechazadas}</div>
-          </div>
-        </div>
-      </div>
 
-      {notificaciones.length > 0 && (
-        <div className="card border-0 shadow-sm mb-4">
-          <div className="card-body">
-            <h6 className="fw-bold mb-3">Notificaciones</h6>
-            <div className="d-flex flex-column gap-2">
-              {notificaciones.slice(0, 3).map((n) => (
-                <div key={n.id} className="notif-item">
-                  <div className="fw-semibold">{n.titulo}</div>
-                  <small className="text-muted">{n.mensaje}</small>
+          {notificaciones.length > 0 && (
+            <div className="card border-0 shadow-sm mb-4">
+              <div className="card-body">
+                <h6 className="fw-bold mb-3">Notificaciones</h6>
+                <div className="d-flex flex-column gap-2">
+                  {notificaciones.slice(0, 3).map((n) => (
+                    <div key={n.id} className="notif-item">
+                      <div className="fw-semibold">{n.titulo}</div>
+                      <small className="text-muted">{n.mensaje}</small>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Lista de reservas */}
+          {reservas.length === 0 ? (
+            <div className="text-center text-muted mt-5">
+              <i className="bi bi-calendar-x" style={{ fontSize: "3rem" }}></i>
+              <p>No tienes reservas</p>
+            </div>
+          ) : (
+            <div className="row">
+              {reservas.map((reserva) => (
+                <div key={reserva.id} className="col-md-6 col-lg-4 mb-4">
+                  <div className="card h-100 reservation-card border-0">
+                    <div className="card-header reservation-header">
+                      <div>
+                        <div className="fw-semibold text-dark">
+                          {reserva.estacionamiento_nombre || "Estacionamiento"}
+                        </div>
+                        <small className="text-muted">
+                          {reserva.estacionamiento_direccion || "Dirección no disponible"}
+                        </small>
+                      </div>
+                      <span className={`badge ${getBadgeClass(reserva.estado)}`}>
+                        {reserva.estado}
+                      </span>
+                    </div>
+                    <div className="card-body d-flex flex-column">
+                      <div className="d-flex justify-content-between align-items-center mb-3">
+                        <div className="text-muted small">
+                          <i className="bi bi-calendar-event me-2"></i>
+                          {formatFecha(reserva.fecha_reserva)}
+                        </div>
+                        <div className="price-pill">
+                          ${calcTotal(reserva) ?? "N/A"}
+                        </div>
+                      </div>
+
+                      <div className="time-row mb-3">
+                        <div>
+                          <div className="label">Inicio</div>
+                          <div className="value">{formatHora(reserva.hora_inicio)}</div>
+                        </div>
+                        <div className="time-divider"></div>
+                        <div>
+                          <div className="label">Fin</div>
+                          <div className="value">{formatHora(reserva.hora_fin)}</div>
+                        </div>
+                      </div>
+                      <div className="text-muted small mb-3">
+                        Cajón: {reserva.cajon_numero ?? reserva.cajon_id ?? "N/A"}
+                      </div>
+
+                      {/* Botón de pago si está pendiente */}
+                      {reserva.pago_estado !== "completado" && reserva.estado !== "cancelada" && reserva.estado !== "rechazada" && (() => {
+                        const ini = new Date(`2000-01-01T${formatHora(reserva.hora_inicio)}`);
+                        const fin = new Date(`2000-01-01T${formatHora(reserva.hora_fin)}`);
+                        const hrs = (fin - ini) / (1000 * 60 * 60);
+                        const precio = reserva.estacionamiento_precio ?? reserva.precio ?? 0;
+                        const monto = hrs > 0 ? (hrs * Number(precio)).toFixed(2) : null;
+                        if (!monto) return null;
+                        return (
+                          <button
+                            className="btn btn-sm w-100 mb-2"
+                            id={`btn-pagar-${reserva.id}`}
+                            style={{
+                              background: "linear-gradient(135deg, #003087, #009cde)",
+                              color: "#fff",
+                              fontWeight: 600,
+                              border: "none",
+                              borderRadius: 8,
+                            }}
+                            onClick={() => setPagoModal({ reservaId: reserva.id, monto })}
+                          >
+                            💳 Pagar Reserva
+                          </button>
+                        );
+                      })()}
+
+
+                      <div className="mb-3">
+                        <button
+                          className="btn btn-sm btn-outline-primary w-100"
+                          onClick={() => toggleQr(reserva)}
+                        >
+                          Mostrar QR de salida
+                        </button>
+
+                        {reserva.estado !== "aceptada" && (
+                          <div className="text-muted small mt-2">
+                            El QR se activará cuando la reserva esté aceptada.
+                          </div>
+                        )}
+                      </div>
+
+
+                      <div className="mt-auto d-flex gap-2">
+                        {reserva.estado === "pendiente" && (
+                          <button
+                            className="btn btn-sm btn-outline-danger flex-fill"
+                            onClick={() => cancelarReserva(reserva.id)}
+                          >
+                            Cancelar
+                          </button>
+                        )}
+                        <button
+                          className="btn btn-sm btn-primary flex-fill"
+                          onClick={() => setDetalle(reserva)}
+                        >
+                          Ver Detalles
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Lista de reservas */}
-      {reservas.length === 0 ? (
-        <div className="text-center text-muted mt-5">
-          <i className="bi bi-calendar-x" style={{ fontSize: "3rem" }}></i>
-          <p>No tienes reservas</p>
-        </div>
-      ) : (
-        <div className="row">
-          {reservas.map((reserva) => (
-            <div key={reserva.id} className="col-md-6 col-lg-4 mb-4">
-              <div className="card h-100 reservation-card border-0">
-                <div className="card-header reservation-header">
-                  <div>
-                    <div className="fw-semibold text-dark">
-                      {reserva.estacionamiento_nombre || "Estacionamiento"}
-                    </div>
-                    <small className="text-muted">
-                      {reserva.estacionamiento_direccion || "Dirección no disponible"}
-                    </small>
-                  </div>
-                  <span className={`badge ${getBadgeClass(reserva.estado)}`}>
-                    {reserva.estado}
-                  </span>
-                </div>
-                <div className="card-body d-flex flex-column">
-                  <div className="d-flex justify-content-between align-items-center mb-3">
-                    <div className="text-muted small">
-                      <i className="bi bi-calendar-event me-2"></i>
-                      {formatFecha(reserva.fecha_reserva)}
-                    </div>
-                    <div className="price-pill">
-                      ${calcTotal(reserva) ?? "N/A"}
-                    </div>
-                  </div>
+          {/* Modal de Pago PayPal */}
+          {pagoModal && (
+            <PaymentModal
+              reservaId={pagoModal.reservaId}
+              monto={pagoModal.monto}
+              moneda="MXN"
+              onSuccess={() => {
+                setPagoModal(null);
+                fetchReservas(); // Recargar reservas para reflejar pago
+              }}
+              onClose={() => setPagoModal(null)}
+            />
+          )}
 
-                  <div className="time-row mb-3">
-                    <div>
-                      <div className="label">Inicio</div>
-                      <div className="value">{formatHora(reserva.hora_inicio)}</div>
-                    </div>
-                    <div className="time-divider"></div>
-                    <div>
-                      <div className="label">Fin</div>
-                      <div className="value">{formatHora(reserva.hora_fin)}</div>
-                    </div>
-                  </div>
-                  <div className="text-muted small mb-3">
-                    Cajón: {reserva.cajon_numero ?? reserva.cajon_id ?? "N/A"}
-                  </div>
-
-                  {!reserva.salida_usada && (
-                    <div className="mb-3">
-                      <button
-                        className="btn btn-sm btn-outline-primary w-100"
-                        onClick={() => toggleQr(reserva)}
-                      >
-                        Mostrar QR de salida
-                      </button>
-
-                      {reserva.estado !== "aceptada" && (
-                        <div className="text-muted small mt-2">
-                          El QR se activará cuando la reserva esté aceptada.
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="mt-auto d-flex gap-2">
-                    {reserva.estado === "pendiente" && (
-                      <button
-                        className="btn btn-sm btn-outline-danger flex-fill"
-                        onClick={() => cancelarReserva(reserva.id)}
-                      >
-                        Cancelar
-                      </button>
-                    )}
+          {/* Modal de Detalles */}
+          {detalle && (
+            <div
+              className="modal show d-block"
+              tabIndex="-1"
+              role="dialog"
+              onClick={() => setDetalle(null)}
+            >
+              <div
+                className="modal-dialog modal-dialog-centered"
+                role="document"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="modal-content border-0 shadow">
+                  <div
+                    className="modal-header text-white"
+                    style={{ backgroundColor: "#3a7bd5" }}
+                  >
+                    <h5 className="modal-title fw-bold">
+                      {detalle.estacionamiento_nombre || "Estacionamiento"}
+                    </h5>
                     <button
-                      className="btn btn-sm btn-primary flex-fill"
-                      onClick={() => setDetalle(reserva)}
+                      type="button"
+                      className="btn-close btn-close-white"
+                      onClick={() => setDetalle(null)}
+                    ></button>
+                  </div>
+                  <div className="modal-body">
+                    <p>
+                      <i className="bi bi-calendar-event me-2"></i>
+                      <strong>Fecha:</strong> {formatFecha(detalle.fecha_reserva)}
+                    </p>
+                    <p>
+                      <i className="bi bi-clock me-2"></i>
+                      <strong>Hora:</strong> {detalle.hora_inicio} - {detalle.hora_fin}
+                    </p>
+                    <p>
+                      <i className="bi bi-check-circle me-2"></i>
+                      <strong>Estado:</strong> {detalle.estado}
+                    </p>
+                    <p>
+                      <i className="bi bi-cash me-2"></i>
+                      <strong>Precio:</strong> ${calcTotal(detalle) ?? "N/A"}
+                    </p>
+                    <p>
+                      <i className="bi bi-car-front me-2"></i>
+                      <strong>Placa:</strong> {detalle.placa_vehiculo}
+                    </p>
+                  </div>
+                  <div className="modal-footer">
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setDetalle(null)}
                     >
-                      Ver Detalles
+                      Cerrar
                     </button>
                   </div>
                 </div>
               </div>
             </div>
-          ))}
-        </div>
-      )}
+          )}
 
-      {/* Modal de Detalles */}
-      {detalle && (
-        <div
-          className="modal show d-block"
-          tabIndex="-1"
-          role="dialog"
-          onClick={() => setDetalle(null)}
-        >
-          <div
-            className="modal-dialog modal-dialog-centered"
-            role="document"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-content border-0 shadow">
+          {/* Modal QR */}
+          {qrModalReserva && (
+            <div
+              className="modal show d-block"
+              tabIndex="-1"
+              role="dialog"
+              onClick={() => setQrModalReserva(null)}
+            >
               <div
-                className="modal-header text-white"
-                style={{ backgroundColor: "#3a7bd5" }}
+                className="modal-dialog modal-dialog-centered"
+                role="document"
+                onClick={(e) => e.stopPropagation()}
               >
-                <h5 className="modal-title fw-bold">
-                  {detalle.estacionamiento_nombre || "Estacionamiento"}
-                </h5>
-                <button
-                  type="button"
-                  className="btn-close btn-close-white"
-                  onClick={() => setDetalle(null)}
-                ></button>
-              </div>
-              <div className="modal-body">
-                <p>
-                  <i className="bi bi-calendar-event me-2"></i>
-                  <strong>Fecha:</strong> {formatFecha(detalle.fecha_reserva)}
-                </p>
-                <p>
-                  <i className="bi bi-clock me-2"></i>
-                  <strong>Hora:</strong> {detalle.hora_inicio} - {detalle.hora_fin}
-                </p>
-                <p>
-                  <i className="bi bi-check-circle me-2"></i>
-                  <strong>Estado:</strong> {detalle.estado}
-                </p>
-                <p>
-                  <i className="bi bi-cash me-2"></i>
-                  <strong>Precio:</strong> ${calcTotal(detalle) ?? "N/A"}
-                </p>
-                <p>
-                  <i className="bi bi-car-front me-2"></i>
-                  <strong>Placa:</strong> {detalle.placa_vehiculo}
-                </p>
-              </div>
-              <div className="modal-footer">
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setDetalle(null)}
-                >
-                  Cerrar
-                </button>
+                <div className="modal-content border-0 shadow">
+                  <div className="modal-header text-white" style={{ backgroundColor: "#1f2937" }}>
+                    <h5 className="modal-title fw-bold">
+                      QR de salida
+                    </h5>
+                    <button
+                      type="button"
+                      className="btn-close btn-close-white"
+                      onClick={() => setQrModalReserva(null)}
+                    ></button>
+                  </div>
+                  <div className="modal-body d-flex flex-column align-items-center">
+                    {qrDataMap[qrModalReserva.id] ? (
+                      <>
+                        <img src={qrDataMap[qrModalReserva.id]} alt="QR salida" className="qr-img" />
+                        <a
+                          className="btn btn-dark w-100 mt-3"
+                          href={qrDataMap[qrModalReserva.id]}
+                          download={`reserva-${qrModalReserva.id}-salida.png`}
+                        >
+                          Descargar QR
+                        </a>
+                      </>
+                    ) : (
+                      <div className="text-muted small">Generando QR...</div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Modal QR */}
-      {qrModalReserva && (
-        <div
-          className="modal show d-block"
-          tabIndex="-1"
-          role="dialog"
-          onClick={() => setQrModalReserva(null)}
-        >
-          <div
-            className="modal-dialog modal-dialog-centered"
-            role="document"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-content border-0 shadow">
-              <div className="modal-header text-white" style={{ backgroundColor: "#1f2937" }}>
-                <h5 className="modal-title fw-bold">
-                  QR de salida
-                </h5>
-                <button
-                  type="button"
-                  className="btn-close btn-close-white"
-                  onClick={() => setQrModalReserva(null)}
-                ></button>
-              </div>
-              <div className="modal-body d-flex flex-column align-items-center">
-                {qrDataMap[qrModalReserva.id] ? (
-                  <>
-                    <img src={qrDataMap[qrModalReserva.id]} alt="QR salida" className="qr-img" />
-                    <a
-                      className="btn btn-dark w-100 mt-3"
-                      href={qrDataMap[qrModalReserva.id]}
-                      download={`reserva-${qrModalReserva.id}-salida.png`}
-                    >
-                      Descargar QR
-                    </a>
-                  </>
-                ) : (
-                  <div className="text-muted small">Generando QR...</div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <style>{`
+          <style>{`
         .reservation-card {
           border-radius: 14px;
           box-shadow: 0 14px 32px rgba(0, 0, 0, 0.08);
@@ -483,7 +527,7 @@ export default function MisReservas() {
           border: 1px solid #e5e7ff;
         }
       `}</style>
-      </div>
+        </div>
       </div>
     </div>
   );
